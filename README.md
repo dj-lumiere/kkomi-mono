@@ -24,6 +24,18 @@ VS Code 예:
 "terminal.integrated.fontFamily": "'KNPS Kkomi Mono'"
 ```
 
+### 웹에서 쓰기
+
+`fonts/woff2/`에 같은 네 벌의 woff2 파일이 있습니다. 하나에 약 1.7MB입니다.
+
+```css
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Italic.woff2") format("woff2"); font-weight: 400; font-style: italic; }
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Bold.woff2") format("woff2"); font-weight: 700; font-style: normal; }
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-BoldItalic.woff2") format("woff2"); font-weight: 700; font-style: italic; }
+code, pre { font-family: "KNPS Kkomi Mono", monospace; }
+```
+
 ## 원본과 달라진 점
 
 **고정폭**
@@ -73,8 +85,11 @@ python make_bold.py ../base/KNPSKkomiMono-Base.ttf ../fonts/KNPSKkomiMono-Bold.t
 python make_bold.py ../base/KNPSKkomiMono-BaseItalic.ttf ../fonts/KNPSKkomiMono-BoldItalic.ttf "Bold Italic"
 ```
 
+woff2는 TTF를 다 만든 뒤 fontTools로 바꿉니다(`TTFont(path).flavor = "woff2"` 후 저장).
+
 첫 단계는 한글 조합 규칙 때문에 2분쯤 걸립니다. `samples/`의 두 파일로 한글, 기호, 리거처, 터미널 기호가 제대로 나오는지 확인할 수 있습니다.
 
-## 출처
+## 라이선스와 출처
 
-원저작물은 국립공원공단의 국립공원 꼬미체(KNPS Kkomi)입니다(http://www.knps.or.kr). 공공누리 출처표시 조건에 따라 이용합니다. 바꾼 내용은 `출처.txt`에 정리되어 있습니다.
+- **폰트** (`fonts/`, `base/`, `source/`): 원저작물은 국립공원공단의 국립공원 꼬미체(KNPS Kkomi)입니다(http://www.knps.or.kr). 공공누리 출처표시 조건에 따라 이용하며, 이 폰트를 쓰거나 다시 배포할 때도 같은 출처를 밝혀야 합니다. 바꾼 내용은 `출처.txt`에 정리되어 있습니다.
+- **빌드 스크립트** (`tools/`): MIT 라이선스입니다(`tools/LICENSE`).
