@@ -1,0 +1,757 @@
+#!/usr/bin/env python3
+"""Builds Wanted Sans Mono, a fixed-width version of Wanted Sans for editors and terminals.
+
+Every Latin, symbol and mark glyph gets one cell (885 units, half the Hangul width).
+Hangul and other East Asian wide characters get two cells (1770 units), which is the
+width they already have, so the Hangul glyphs are kept as they are.
+
+A glyph wider than its cell is narrowed horizontally. Narrowing thins its vertical
+strokes, so the outline is taken from a heavier instance of the variable font before
+it is narrowed. ALPHA sets how much of the lost stroke width this gives back.
+
+Proportional features (kerning, the original contextual alternates and ligatures) are
+turned off. The `calt` feature is replaced with coding ligatures that keep the cell grid:
+the leading characters become empty spacer glyphs and the last one draws the whole shape
+leftwards over their cells.
+
+Needs: fonttools, skia-pathops.
+Usage: make_mono.py <wanted sans folder> <output folder>
+"""
+import copy
+import math
+import os
+import shutil
+import sys
+import unicodedata
+
+from fontTools.feaLib.builder import Builder
+from fontTools.feaLib.parser import Parser
+from fontTools.pens.boundsPen import BoundsPen
+from fontTools.pens.recordingPen import DecomposingRecordingPen, RecordingPen
+from fontTools.pens.transformPen import TransformPen
+from fontTools.pens.ttGlyphPen import TTGlyphPen
+from fontTools.ttLib import TTFont
+from fontTools.ttLib.removeOverlaps import removeOverlaps
+from fontTools.varLib import instancer
+from io import StringIO
+
+CELL = 885
+WIDE = 2 * CELL
+MARGIN = 45            # smallest side bearing a narrowed glyph keeps
+MARK_SCALE = 0.8       # horizontal scale for zero-width combining marks
+ALPHA = 0.6            # 0 = no stroke compensation, 1 = full compensation
+WEIGHT_STEP = 25       # donor instances are taken on this grid of the wght axis
+
+STYLES = [
+    ("Regular", 400), ("Medium", 500), ("SemiBold", 600), ("Bold", 700),
+    ("ExtraBold", 800), ("Black", 900), ("ExtraBlack", 1000),
+]
+
+OLD_FAMILY = "Wanted Sans"
+NEW_FAMILY = "Wanted Sans Mono"
+OLD_PS = "WantedSans"
+NEW_PS = "WantedSansMono"
+
+# Features whose effect depends on proportional widths. Their lookups are unhooked.
+DROP_GSUB = {"calt", "clig", "dlig", "liga"}
+DROP_GPOS = {"kern"}
+
+# Glyphs that are easy to confuse in code get the font's own distinct alternate as
+# their default shape: slashed zero, I with serifs, l with a tail.
+BAKE_ALTERNATES = {"zero": "zero.zero", "I": "I.cv18", "l": "l.cv16"}
+
+# (name, characters). Longer sequences come first so they win over their prefixes.
+LIGATURES = [
+    ("less_hyphen_greater", "<->"),
+    ("less_equal_greater", "<=>"),
+    ("equal_equal_equal", "==="),
+    ("exclam_equal_equal", "!=="),
+    ("hyphen_greater", "->"),
+    ("less_hyphen", "<-"),
+    ("equal_greater", "=>"),
+    ("equal_equal", "=="),
+    ("exclam_equal", "!="),
+    ("less_equal", "<="),     # only when the font has its own ≤ and ≥
+    ("greater_equal", ">="),
+]
+# A ligature is not formed when one of these stands right before or after it,
+# so `<!--`, `-->`, `<=>` and `====` keep their plain characters.
+OPERATOR_CHARS = "-=<>!"
+
+
+# ---------------------------------------------------------------- outlines
+
+def record(glyph_set, name):
+    pen = DecomposingRecordingPen(glyph_set, reverseFlipped=True)
+    glyph_set[name].draw(pen)
+    return pen.value
+
+
+def bounds(ops):
+    pen = BoundsPen(None)
+    for op, args in ops:
+        getattr(pen, op)(*args)
+    return pen.bounds
+
+
+def transformed(ops, sx, dx, sy=1.0, dy=0.0):
+    out = RecordingPen()
+    pen = TransformPen(out, (sx, 0, 0, sy, dx, dy))
+    for op, args in ops:
+        getattr(pen, op)(*args)
+    return out.value
+
+
+def to_glyph(ops):
+    pen = TTGlyphPen(None)
+    for op, args in ops:
+        getattr(pen, op)(*args)
+    glyph = pen.glyph(dropImpliedOnCurves=False)
+    if glyph.numberOfContours > 0:
+        glyph.coordinates.toInt()
+    return glyph
+
+
+CLOCKWISE = True  # set from the font in add_ligatures
+
+
+def rect(x0, y0, x1, y1):
+    pts = [(x0, y0), (x0, y1), (x1, y1), (x1, y0)]
+    return quad(pts)
+
+
+def quad(pts):
+    # pts are given clockwise. Filled contours must turn the same way as the font's
+    # own, or removing overlaps would cut holes where they cross.
+    if not CLOCKWISE:
+        pts = pts[::-1]
+    return [("moveTo", (pts[0],))] + [("lineTo", (p,)) for p in pts[1:]] + [("closePath", ())]
+
+
+def signed_area(pts):
+    return sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1])) / 2
+
+
+def polygon_points(ops):
+    contours, cur = [], []
+    for op, args in ops:
+        if op == "moveTo":
+            cur = [args[0]]
+        elif op in ("lineTo", "qCurveTo", "curveTo"):
+            cur.extend(a for a in args if a is not None)
+        elif op in ("closePath", "endPath"):
+            if cur:
+                contours.append(cur)
+            cur = []
+    return contours
+
+
+def crossings(ops, y):
+    xs = []
+    for pts in polygon_points(ops):
+        for (x0, y0), (x1, y1) in zip(pts, pts[1:] + pts[:1]):
+            if (y0 <= y < y1) or (y1 <= y < y0):
+                xs.append(x0 + (y - y0) * (x1 - x0) / (y1 - y0))
+    return sorted(xs)
+
+
+# ---------------------------------------------------------------- donors
+
+class Donors:
+    """Heavier instances of the variable font, used for narrowed glyphs."""
+
+    def __init__(self, var_path, glyph_names):
+        self.var = TTFont(var_path)
+        keep = set(glyph_names) & set(self.var.getGlyphOrder())
+        # Drop the Hangul outlines and layout tables so each instance is quick to make.
+        from fontTools import subset
+        opts = subset.Options()
+        opts.glyph_names = True
+        opts.layout_features = []
+        opts.notdef_outline = True
+        opts.name_IDs = []
+        opts.drop_tables += ["GSUB", "GPOS", "GDEF", "STAT"]
+        sub = subset.Subsetter(opts)
+        sub.populate(glyphs=keep)
+        sub.subset(self.var)
+        self.cache = {}
+
+    def glyph_set(self, wght):
+        if wght not in self.cache:
+            inst = instancer.instantiateVariableFont(self.var, {"wght": wght})
+            self.cache[wght] = inst.getGlyphSet()
+        return self.cache[wght]
+
+
+class StemCurve:
+    """Vertical stem width of `l` against the wght value, from the static fonts."""
+
+    def __init__(self, samples):
+        self.samples = sorted(samples)
+
+    def stem(self, w):
+        s = self.samples
+        for (w0, t0), (w1, t1) in zip(s, s[1:]):
+            if w0 <= w <= w1:
+                return t0 + (t1 - t0) * (w - w0) / (w1 - w0)
+        return s[0][1] if w < s[0][0] else s[-1][1]
+
+    def weight_for(self, stem):
+        s = self.samples
+        if stem <= s[0][1]:
+            return s[0][0]
+        for (w0, t0), (w1, t1) in zip(s, s[1:]):
+            if t0 <= stem <= t1:
+                return w0 + (w1 - w0) * (stem - t0) / (t1 - t0)
+        return s[-1][0]
+
+
+# ---------------------------------------------------------------- per font
+
+def classify(font):
+    hmtx = font["hmtx"]
+    codepoints = {}
+    for cp, name in font.getBestCmap().items():
+        codepoints.setdefault(name, []).append(cp)
+    kinds = {}
+    for name in font.getGlyphOrder():
+        adv = hmtx[name][0]
+        cps = codepoints.get(name, [])
+        if adv == 0:
+            kinds[name] = "zero"
+        elif any(unicodedata.east_asian_width(chr(cp)) in "WF" for cp in cps):
+            kinds[name] = "wide"
+        elif not cps and adv == WIDE:
+            kinds[name] = "wide"
+        else:
+            kinds[name] = "narrow"
+    return kinds
+
+
+def joins(b, adv, box):
+    return b[0] <= 0 and b[2] >= adv and adv > box
+
+
+def fit(ops, adv, box, donor_ops=None):
+    """Places a glyph in a box `box` units wide. Returns (new ops, (s, src_center, dst_center))."""
+    b = bounds(ops)
+    if b is None:
+        return [], (1.0, 0.0, 0.0)
+    x0, _, x1, _ = b
+    # A wide glyph whose ink reaches its advance edges joins its neighbours (underscore,
+    # horizontal bars). Its advance box is mapped onto the cell so it keeps joining.
+    if joins(b, adv, box):
+        s = box / adv
+        return transformed(ops, s, 0.0), (s, 0.0, 0.0)
+    avail = box - 2 * MARGIN
+    s = min(1.0, avail / (x1 - x0))
+    src = donor_ops if donor_ops is not None else ops
+    db = bounds(src)
+    dx0, _, dx1, _ = db
+    sd = min(s, avail / (dx1 - dx0))
+    center = (dx0 + dx1) / 2
+    return transformed(src, sd, box / 2 - sd * center), (sd, (x0 + x1) / 2, box / 2)
+
+
+def build_style(src_path, wght, donors, stems, out_path):
+    font = TTFont(src_path)
+    glyph_set = font.getGlyphSet()
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+    kinds = classify(font)
+    xforms = {}
+    changed = []
+    base_stem = stems.stem(wght)
+
+    for name in font.getGlyphOrder():
+        kind = kinds[name]
+        adv = hmtx[name][0]
+        if kind == "wide" and adv == WIDE and not glyf[name].isComposite():
+            continue  # Hangul: already two cells
+        ops = record(glyph_set, name)
+        if kind == "zero":
+            new_ops = transformed(ops, MARK_SCALE, 0.0)
+            xforms[name] = (MARK_SCALE, 0.0, 0.0)
+            new_adv = 0
+        else:
+            box = WIDE if kind == "wide" else CELL
+            donor_ops = None
+            b = bounds(ops)
+            if b is not None and not joins(b, adv, box):
+                s = (box - 2 * MARGIN) / (b[2] - b[0])
+                if s < 0.97:
+                    want = base_stem * (1 + ALPHA * (1 / s - 1))
+                    w = round(stems.weight_for(want) / WEIGHT_STEP) * WEIGHT_STEP
+                    w = min(1000, max(wght, w))
+                    if w > wght:
+                        dset = donors.glyph_set(w)
+                        if name in dset:
+                            donor_ops = record(dset, name)
+            new_ops, xforms[name] = fit(ops, adv, box, donor_ops)
+            new_adv = box
+        glyf[name] = to_glyph(new_ops)
+        hmtx[name] = (new_adv, 0)
+        changed.append(name)
+
+    for base, alt in BAKE_ALTERNATES.items():
+        if base in glyf and alt in glyf:
+            glyf[base] = copy.deepcopy(glyf[alt])
+    transform_anchors(font, xforms)
+    unhook_features(font)
+    lig_names = add_ligatures(font, kinds)
+    changed += lig_names
+
+    removeOverlaps(font, glyphNames=changed, removeHinting=True, ignoreErrors=True)
+    for name in font.getGlyphOrder():
+        g = glyf[name]
+        g.recalcBounds(glyf)
+        hmtx[name] = (hmtx[name][0], getattr(g, "xMin", 0) if g.numberOfContours else 0)
+
+    finish_tables(font)
+    rename(font)
+    font.save(out_path)
+
+
+# ---------------------------------------------------------------- GPOS anchors
+
+def transform_anchors(font, xforms):
+    if "GPOS" not in font:
+        return
+    seen = set()
+
+    def move(anchor, glyph):
+        if anchor is None or id(anchor) in seen or glyph not in xforms:
+            return
+        seen.add(id(anchor))
+        s, src, dst = xforms[glyph]
+        anchor.XCoordinate = round(s * (anchor.XCoordinate - src) + dst)
+
+    for lookup in font["GPOS"].table.LookupList.Lookup:
+        for st in lookup.SubTable:
+            ltype = lookup.LookupType
+            if ltype == 9:
+                ltype, st = st.ExtensionLookupType, st.ExtSubTable
+            if ltype == 4:
+                for g, rec in zip(st.MarkCoverage.glyphs, st.MarkArray.MarkRecord):
+                    move(rec.MarkAnchor, g)
+                for g, rec in zip(st.BaseCoverage.glyphs, st.BaseArray.BaseRecord):
+                    for a in rec.BaseAnchor:
+                        move(a, g)
+            elif ltype == 5:
+                for g, rec in zip(st.MarkCoverage.glyphs, st.MarkArray.MarkRecord):
+                    move(rec.MarkAnchor, g)
+                for g, att in zip(st.LigatureCoverage.glyphs, st.LigatureArray.LigatureAttach):
+                    for comp in att.ComponentRecord:
+                        for a in comp.LigatureAnchor:
+                            move(a, g)
+            elif ltype == 6:
+                for g, rec in zip(st.Mark1Coverage.glyphs, st.Mark1Array.MarkRecord):
+                    move(rec.MarkAnchor, g)
+                for g, rec in zip(st.Mark2Coverage.glyphs, st.Mark2Array.Mark2Record):
+                    for a in rec.Mark2Anchor:
+                        move(a, g)
+
+
+def unhook_features(font):
+    for tag, drop in (("GSUB", DROP_GSUB), ("GPOS", DROP_GPOS)):
+        for fr in font[tag].table.FeatureList.FeatureRecord:
+            if fr.FeatureTag in drop:
+                fr.Feature.LookupListIndex = []
+                fr.Feature.LookupCount = 0
+
+
+# ---------------------------------------------------------------- ligatures
+
+def add_ligatures(font, kinds, relation=None, extra_fea=""):
+    """relation, when given, is ((kx, ky), weight): `<=` and `>=` then become the font's
+    own < and > squeezed by kx and ky over a bar, with weight(ops, dx, dy) giving back
+    the stroke width the squeeze took."""
+    glyph_set = font.getGlyphSet()
+    cmap = font.getBestCmap()
+    gname = {ch: cmap[ord(ch)] for ch in OPERATOR_CHARS}
+
+    hyphen = bounds(record(glyph_set, gname["-"]))
+    axis = (hyphen[1] + hyphen[3]) / 2
+    stroke = hyphen[3] - hyphen[1]
+    equal_ops = record(glyph_set, gname["="])
+    equal = bounds(equal_ops)
+    eq_bar = bounds(polygon_points_ops(equal_ops)[0])
+    eq_stroke = eq_bar[3] - eq_bar[1]
+    eq_gap = (equal[3] - equal[1]) - 2 * eq_stroke
+    greater = record(glyph_set, gname[">"])
+    global CLOCKWISE
+    CLOCKWISE = signed_area(polygon_points(greater)[0]) < 0
+    less = record(glyph_set, gname["<"])
+    slash = slash_of(font, glyph_set)
+
+    def shaft_end(chev, y0, y1, right_side):
+        inner, outer = [], []
+        for y in (y0 + 1, (y0 + y1) / 2, y1 - 1):
+            xs = crossings(chev, y)
+            if len(xs) < 2:
+                continue
+            if right_side:
+                outer.append(xs[-1]); inner.append(xs[-2])
+            else:
+                outer.append(xs[0]); inner.append(xs[1])
+        if right_side:
+            return (max(inner) + min(outer)) / 2
+        return (min(inner) + max(outer)) / 2
+
+    def bars(count, gap):
+        total = count * eq_stroke + (count - 1) * gap
+        top = axis + total / 2
+        return [(top - i * (eq_stroke + gap) - eq_stroke, top - i * (eq_stroke + gap))
+                for i in range(count)]
+
+    left_hy = hyphen[0]
+    left_eq = equal[0]
+    hyphen_ops = record(glyph_set, gname["-"])
+
+    def bar(x0, x1, yc):
+        # The font's own hyphen, lengthened in the middle so its ends keep their shape.
+        hx0, hy0, hx1, hy1 = hyphen
+        mid = (hx0 + hx1) / 2
+        dy = yc - (hy0 + hy1) / 2
+        return [(op, tuple(None if pt is None else
+                           (pt[0] + (x0 - hx0 if pt[0] < mid else x1 - hx1), pt[1] + dy)
+                           for pt in args)) for op, args in hyphen_ops]
+
+    shapes = {}
+    W2, W3 = 2 * CELL, 3 * CELL
+
+    # ->  <-  <->
+    g_right = transformed(greater, 1.0, W2 - CELL)
+    end = shaft_end(g_right, axis - stroke / 2, axis + stroke / 2, True)
+    shapes["hyphen_greater"] = (2, g_right + bar(left_hy, end, axis))
+    l_left = less
+    start = shaft_end(l_left, axis - stroke / 2, axis + stroke / 2, False)
+    shapes["less_hyphen"] = (2, l_left + bar(start, W2 - (CELL - hyphen[2]), axis))
+    g3 = transformed(greater, 1.0, W3 - CELL)
+    end3 = shaft_end(g3, axis - stroke / 2, axis + stroke / 2, True)
+    shapes["less_hyphen_greater"] = (3, less + g3 + bar(start, end3, axis))
+
+    # =>
+    ops = list(g_right)
+    for y0, y1 in bars(2, eq_gap):
+        ops += bar(left_eq, shaft_end(g_right, y0, y1, True), (y0 + y1) / 2)
+    shapes["equal_greater"] = (2, ops)
+
+    # ==  ===  !=  !==
+    def bar_ops(n, count, gap):
+        out = []
+        for y0, y1 in bars(count, gap):
+            out += bar(left_eq, n * CELL - (CELL - equal[2]), (y0 + y1) / 2)
+        return out
+
+    gap3 = eq_gap
+    shapes["equal_equal"] = (2, bar_ops(2, 2, eq_gap))
+    shapes["equal_equal_equal"] = (3, bar_ops(3, 3, gap3))
+    slash_glyph = record(glyph_set, cmap[ord("/")]) if relation is not None else None
+
+    def slash_ops(cx, extra):
+        if relation is None:
+            return slash(cx, axis, extra)
+        # the font's own / with its round ends, as tall as the bars plus an overhang
+        sb0 = bounds(slash_glyph)
+        height = (bars_height(extra) + 2 * eq_stroke * 1.6)
+        k = height / (sb0[3] - sb0[1])
+        ops = transformed(slash_glyph, k, cx - k * (sb0[0] + sb0[2]) / 2,
+                          k, axis - k * (sb0[1] + sb0[3]) / 2)
+        # thicken the stroke to the bars' thickness, measured across the stroke
+        sb = bounds(ops)
+        xs = crossings(ops, (sb[1] + sb[3]) / 2)
+        across_x = xs[-1] - xs[0]
+        run = (sb[2] - sb[0]) - across_x
+        rise = sb[3] - sb[1]
+        across = across_x * rise / math.hypot(run, rise)
+        grow = eq_stroke - across
+        return relation[1](ops, grow, grow) if abs(grow) > 1 else ops
+
+    def bars_height(extra):
+        return 2 * eq_stroke + eq_gap + extra
+
+    shapes["exclam_equal"] = (2, bar_ops(2, 2, eq_gap) + slash_ops(W2 / 2, 0))
+    tall3 = (3 * eq_stroke + 2 * gap3) - (2 * eq_stroke + eq_gap)
+    shapes["exclam_equal_equal"] = (3, bar_ops(3, 3, gap3) + slash_ops(W3 / 2, tall3))
+
+    # <=>
+    ops = less + g3
+    for y0, y1 in bars(2, eq_gap):
+        ops += bar(shaft_end(less, y0, y1, False), shaft_end(g3, y0, y1, True), (y0 + y1) / 2)
+    shapes["less_equal_greater"] = (3, ops)
+
+    # <=  >=  as the font's own < and > with a copy of the lower arm set under it
+    if relation is not None:
+        kx, ky = relation[0]
+        weight = relation[1]
+        for name, chev, tip_right in (("less_equal", less, False), ("greater_equal", greater, True)):
+            cb = bounds(chev)
+            ccx, ccy = (cb[0] + cb[2]) / 2, (cb[1] + cb[3]) / 2
+            flat = transformed(chev, kx, -kx * ccx, ky, -ky * ccy)
+            flat = weight(flat, stroke * (1 - kx), stroke * (1 - ky))
+            fb = bounds(flat)
+            r = stroke / 2
+            tip = (fb[2] - r if tip_right else fb[0] + r, (fb[1] + fb[3]) / 2)
+            end_ = (fb[0] + r if tip_right else fb[2] - r, fb[1] + r)
+            vx, vy = end_[0] - tip[0], end_[1] - tip[1]
+            vl = math.hypot(vx, vy)
+            vx, vy = vx / vl, vy / vl
+            # cut the lower arm across its stroke, a little past the tip
+            p0 = (tip[0] + vx * stroke * 1.2, tip[1] + vy * stroke * 1.2)
+            nx, ny = -vy, vx
+            big = 5000
+            half = [(p0[0] + nx * big, p0[1] + ny * big),
+                    (p0[0] + nx * big + vx * big, p0[1] + ny * big + vy * big),
+                    (p0[0] - nx * big + vx * big, p0[1] - ny * big + vy * big),
+                    (p0[0] - nx * big, p0[1] - ny * big)]
+            below = [(-big, tip[1]), (big, tip[1]), (big, -big), (-big, -big)]
+            arm = clip_polygon(clip_polygon(flat, below), half)
+            # round the cut end: a circle on the cut edge's midpoint, as wide as the edge
+            on_cut = [pt for c in polygon_points(arm) for pt in c
+                      if abs((pt[0] - p0[0]) * vx + (pt[1] - p0[1]) * vy) < 1.0]
+            if len(on_cut) >= 2:
+                a_, b_ = min(on_cut, key=lambda q: q[0] * nx + q[1] * ny), max(on_cut, key=lambda q: q[0] * nx + q[1] * ny)
+                mid = ((a_[0] + b_[0]) / 2, (a_[1] + b_[1]) / 2)
+                # lengthen the stroke back along itself until it starts under the bend
+                ext = abs(mid[0] - tip[0]) / abs(vx)
+                arm = [(op, tuple(None if pt is None else
+                                  ((pt[0] - vx * ext, pt[1] - vy * ext)
+                                   if abs((pt[0] - p0[0]) * vx + (pt[1] - p0[1]) * vy) < 1.0 else pt)
+                                  for pt in args)) for op, args in arm]
+                arm += circle((mid[0] - vx * ext, mid[1] - vy * ext), math.dist(a_, b_) / 2)
+            # centre-to-centre distance across the strokes: 2.2 strokes
+            drop = stroke * 2.2 / abs(vx)
+            ops = flat + transformed(arm, 1.0, 0.0, 1.0, -drop)
+            ob = bounds(ops)
+            shapes[name] = (2, transformed(ops, 1.0, W2 / 2 - (ob[0] + ob[2]) / 2,
+                                           1.0, axis - (ob[1] + ob[3]) / 2))
+
+    glyf = font["glyf"]
+    hmtx = font["hmtx"]
+    order = font.getGlyphOrder()
+    new = []
+    for name, (n, ops) in shapes.items():
+        lig = f"{name}.liga"
+        glyf[lig] = to_glyph(transformed(ops, 1.0, -(n - 1) * CELL))
+        hmtx[lig] = (CELL, 0)
+        new.append(lig)
+        for i in range(n - 1):
+            sp = f"{name}.spacer{i}"
+            glyf[sp] = to_glyph([])
+            hmtx[sp] = (CELL, 0)
+            new.append(sp)
+    font.setGlyphOrder(order + [g for g in new if g not in order])
+    glyf.glyphOrder = font.getGlyphOrder()
+
+    install_calt(font, gname, set(shapes), extra_fea)
+    return new
+
+
+def circle(center, radius, steps=24):
+    cx, cy = center
+    pts = [(cx + radius * math.cos(-2 * math.pi * i / steps), cy + radius * math.sin(-2 * math.pi * i / steps))
+           for i in range(steps)]  # clockwise
+    if not CLOCKWISE:
+        pts = pts[::-1]
+    return [("moveTo", (pts[0],))] + [("lineTo", (p,)) for p in pts[1:]] + [("closePath", ())]
+
+
+def clip_polygon(ops, poly):
+    """The part of an outline inside a polygon, through skia-pathops, turned the font's way."""
+    import pathops
+    shape, box = pathops.Path(), pathops.Path()
+    pen = shape.getPen()
+    for op, args in ops:
+        getattr(pen, op)(*args)
+    bpen = box.getPen()
+    bpen.moveTo(poly[0])
+    for pt in poly[1:]:
+        bpen.lineTo(pt)
+    bpen.closePath()
+    out = pathops.op(shape, box, pathops.PathOp.INTERSECTION)
+    rec = RecordingPen()
+    out.draw(rec)
+    kept = []
+    for part in polygon_points_ops(rec.value):
+        pts = polygon_points(part)[0]
+        area = signed_area(pts)
+        if abs(area) < 200:
+            continue
+        if (area < 0) != CLOCKWISE:
+            from fontTools.pens.reverseContourPen import ReverseContourPen
+            r = RecordingPen()
+            rev = ReverseContourPen(r)
+            for op, args in part:
+                getattr(rev, op)(*args)
+            part = r.value
+        kept += part
+    return kept
+
+
+def polygon_points_ops(ops):
+    out, cur = [], []
+    for op, args in ops:
+        cur.append((op, args))
+        if op in ("closePath", "endPath"):
+            out.append(cur)
+            cur = []
+    return out
+
+
+def slash_of(font, glyph_set):
+    """The stroke of `≠`, as a function that places it centered at (cx, cy)."""
+    ops = record(glyph_set, font.getBestCmap()[0x2260])
+    contours = polygon_points_ops(ops)
+    if len(contours) > 1:
+        # The stroke is drawn on its own: use the tallest contour as it is.
+        tallest = max(contours, key=lambda c: bounds(c)[3] - bounds(c)[1])
+        tb = bounds(tallest)
+        tcx, tcy = (tb[0] + tb[2]) / 2, (tb[1] + tb[3]) / 2
+
+        def place_contour(cx, cy, extra):
+            return [(op, tuple(None if pt is None else
+                               (pt[0] + cx - tcx, pt[1] + cy - tcy + (extra / 2 if pt[1] > tcy else -extra / 2))
+                               for pt in args)) for op, args in tallest]
+        return place_contour
+    pts = [p for contour in polygon_points(ops) for p in contour]
+    ymin = min(p[1] for p in pts)
+    ymax = max(p[1] for p in pts)
+    bottom = sorted(p[0] for p in pts if p[1] == ymin)
+    top = sorted(p[0] for p in pts if p[1] == ymax)
+    bx = (bottom[0] + bottom[-1]) / 2
+    tx = (top[0] + top[-1]) / 2
+    half_w = (bottom[-1] - bottom[0]) / 2
+    slope = (tx - bx) / (ymax - ymin)
+
+    def place(cx, cy, extra):
+        h = (ymax - ymin) / 2 + extra / 2
+        bxc = cx - slope * h
+        txc = cx + slope * h
+        y0, y1 = cy - h, cy + h
+        return quad([(bxc - half_w, y0), (txc - half_w, y1), (txc + half_w, y1), (bxc + half_w, y0)])
+
+    return place
+
+
+def install_calt(font, gname, built, extra_fea=""):
+    ops_class = " ".join(gname[c] for c in OPERATOR_CHARS)
+    lines = [f"@OPS = [{ops_class}];"]
+    ligatures = [(n, c) for n, c in LIGATURES if n in built]
+    for name, chars in ligatures:
+        g = [gname[c] for c in chars]
+        sp = [f"{name}.spacer{i}" for i in range(len(chars) - 1)]
+        seq = " ".join(g[1:])
+        lines.append(f"lookup {name} {{")
+        lines.append(f"    ignore sub @OPS {g[0]}' {seq};")
+        lines.append(f"    ignore sub {g[0]}' {seq} @OPS;")
+        # Rules for later positions come first: they see the spacers already placed.
+        for i in range(len(chars) - 1, 0, -1):
+            before = " ".join(sp[:i])
+            after = " ".join(g[i + 1:])
+            target = f"{name}.liga" if i == len(chars) - 1 else sp[i]
+            lines.append(f"    sub {before} {g[i]}' {after} by {target};".replace("  ", " "))
+        lines.append(f"    sub {g[0]}' {seq} by {sp[0]};")
+        lines.append(f"}} {name};")
+    lines.append("feature calt {")
+    for name, _ in ligatures:
+        lines.append(f"    lookup {name};")
+    lines.append("} calt;")
+    fea = "\n".join(lines) + "\n" + extra_fea
+
+    # feaLib writes a whole GSUB table. Build it on the side, then move its lookups
+    # into the font's own GSUB and point every `calt` record at them.
+    parsed = Parser(StringIO(fea), glyphNames=font.getGlyphOrder()).parse()
+    if "GSUB" not in font:
+        Builder(font, parsed).build(tables={"GSUB"})
+        return
+    old = font["GSUB"]
+    del font["GSUB"]
+    Builder(font, parsed).build(tables={"GSUB"})
+    built = font["GSUB"].table
+    font["GSUB"] = old
+    table = old.table
+
+    offset = len(table.LookupList.Lookup)
+    for lookup in built.LookupList.Lookup:
+        for st in lookup.SubTable:
+            shift_lookup_refs(st, offset)
+        table.LookupList.Lookup.append(lookup)
+    table.LookupList.LookupCount = len(table.LookupList.Lookup)
+    calt_idx = [offset + i for i in built.FeatureList.FeatureRecord[0].Feature.LookupListIndex]
+    for fr in table.FeatureList.FeatureRecord:
+        if fr.FeatureTag == "calt":
+            fr.Feature.LookupListIndex = list(calt_idx)
+            fr.Feature.LookupCount = len(calt_idx)
+
+
+def shift_lookup_refs(obj, offset, seen=None):
+    seen = seen if seen is not None else set()
+    if id(obj) in seen:
+        return
+    seen.add(id(obj))
+    if isinstance(obj, list):
+        for x in obj:
+            shift_lookup_refs(x, offset, seen)
+        return
+    if not hasattr(obj, "__dict__"):
+        return
+    for key, val in list(vars(obj).items()):
+        if key == "LookupListIndex" and isinstance(val, int):
+            setattr(obj, key, val + offset)
+        elif isinstance(val, (list, object)) and not isinstance(val, (str, int, float, bytes)):
+            shift_lookup_refs(val, offset, seen)
+
+
+# ---------------------------------------------------------------- tables
+
+def finish_tables(font):
+    font["post"].isFixedPitch = 1
+    os2 = font["OS/2"]
+    os2.xAvgCharWidth = CELL
+    os2.panose.bProportion = 9  # monospaced
+    for tag in ("DSIG",):
+        if tag in font:
+            del font[tag]
+
+
+def rename(font):
+    for rec in font["name"].names:
+        if rec.nameID not in (1, 3, 4, 6, 16, 17, 18, 21, 22, 25):
+            continue
+        text = rec.toUnicode()
+        text = text.replace(OLD_FAMILY, NEW_FAMILY).replace(OLD_PS, NEW_PS)
+        rec.string = text
+
+
+# ---------------------------------------------------------------- main
+
+def main():
+    src, out = sys.argv[1], sys.argv[2]
+    os.makedirs(out, exist_ok=True)
+    static = {style: os.path.join(src, "ttf", f"WantedSans-{style}.ttf") for style, _ in STYLES}
+
+    samples = []
+    for style, w in STYLES:
+        f = TTFont(static[style])
+        b = bounds(record(f.getGlyphSet(), "l"))
+        samples.append((w, b[2] - b[0]))
+    stems = StemCurve(samples)
+
+    names = TTFont(static["Regular"]).getGlyphOrder()
+    hmtx = TTFont(static["Regular"])["hmtx"]
+    donors = Donors(os.path.join(src, "variable", "WantedSansVariable.ttf"),
+                    [n for n in names if hmtx[n][0] != WIDE])
+
+    only = sys.argv[3:] or [s for s, _ in STYLES]
+    for style, w in STYLES:
+        if style not in only:
+            continue
+        path = os.path.join(out, f"{NEW_PS}-{style}.ttf")
+        build_style(static[style], w, donors, stems, path)
+        print("wrote", path, flush=True)
+    shutil.copy(os.path.join(src, "OFL.txt"), os.path.join(out, "OFL.txt"))
+
+
+if __name__ == "__main__":
+    main()

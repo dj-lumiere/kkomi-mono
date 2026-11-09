@@ -1,0 +1,830 @@
+"""Symbols a terminal font is expected to have, drawn to the cell.
+
+Box drawing, block elements, braille and the Powerline separators must reach the cell
+edges exactly, so neighbouring cells join: they are drawn as straight geometry, not
+taken from the font. The rest (check marks, bullets, superscripts, accented letters of
+Latin Extended-A) is built from the font's own glyphs.
+
+Everything works on the font after it has become TrueType and fixed-width, in cell
+coordinates: x from 0 to CELL, y from the descent to the ascent.
+"""
+import math
+import unicodedata
+
+import make_mono as M
+
+LIGHT = 60
+HEAVY = 128
+DOUBLE_LINE = 48
+DOUBLE_GAP = 56   # between the two lines of a double stroke
+
+
+class Cell:
+    def __init__(self, font):
+        self.w = M.CELL
+        self.top = font["hhea"].ascent
+        self.bottom = font["hhea"].descent
+        self.cx = self.w / 2
+        self.cy = (self.top + self.bottom) / 2
+
+
+# ---------------------------------------------------------------- box drawing
+
+def parse_box(name):
+    """{direction: weight} from a BOX DRAWINGS name, plus dash count and arc flag."""
+    words = name.replace("BOX DRAWINGS ", "")
+    dashes = 0
+    for word, n in (("DOUBLE DASH", 2), ("TRIPLE DASH", 3), ("QUADRUPLE DASH", 4)):
+        if word in words:
+            dashes = n
+            words = words.replace(word + " ", "")
+    arc = "ARC" in words
+    words = words.replace("ARC ", "")
+    weights = {"LIGHT": "l", "SINGLE": "l", "HEAVY": "h", "DOUBLE": "d"}
+    dirs = {"UP": ["u"], "DOWN": ["d"], "LEFT": ["l"], "RIGHT": ["r"],
+            "VERTICAL": ["u", "d"], "HORIZONTAL": ["l", "r"]}
+    out = {}
+    carried = None
+    for group in words.split(" AND "):
+        toks = group.split()
+        if toks[0] in weights:
+            w, toks = weights[toks[0]], toks[1:]
+        elif toks[-1] in weights:
+            w, toks = weights[toks[-1]], toks[:-1]
+        else:
+            w = carried
+        carried = w
+        for t in toks:
+            for d in dirs.get(t, []):
+                out[d] = w
+    return out, dashes, arc
+
+
+def box_glyph(cp, cell):
+    name = unicodedata.name(chr(cp), "")
+    c = cell
+    if "DIAGONAL" in name:
+        ops = []
+        if "UPPER RIGHT TO LOWER LEFT" in name or "CROSS" in name:
+            ops += stroke_line((c.w, c.top), (0, c.bottom), LIGHT)
+        if "UPPER LEFT TO LOWER RIGHT" in name or "CROSS" in name:
+            ops += stroke_line((0, c.top), (c.w, c.bottom), LIGHT)
+        return ops
+    segs, dashes, arc = parse_box(name)
+    if arc:
+        return arc_glyph(segs, c)
+    thick = {"l": LIGHT, "h": HEAVY}
+    off = DOUBLE_GAP / 2 + DOUBLE_LINE / 2       # each line of a double, from the centre
+    other = {"u": "d", "d": "u", "l": "r", "r": "l"}
+
+    def single_start(perp, sign, center):
+        """Where a light or heavy stroke starts, near the centre."""
+        a, b = segs.get(perp[0]), segs.get(perp[1])
+        if a == "d" and b == "d":
+            return center + sign * off           # between two doubles: touch the near line
+        if a == "d" or b == "d":
+            return center - sign * off - DOUBLE_LINE / 2   # a double on one side: reach its far line
+        e = max(thick.get(a, 0) / 2, thick.get(b, 0) / 2)
+        return center - sign * e
+
+    def double_start(perp, side_dir, sign, center):
+        """Where one line of a double starts. side_dir is the perpendicular direction
+        on this line's side of the centre."""
+        near, far = segs.get(side_dir), segs.get(other[side_dir])
+        if near == "d":
+            return center + sign * off           # meets the double on its side: inner corner
+        if near:
+            return center - sign * thick[near] / 2 if far != "d" else center + sign * off
+        if far == "d":
+            return center - sign * off - DOUBLE_LINE / 2   # the double turns away: outer corner
+        if far:
+            return center - sign * thick[far] / 2
+        return center
+
+    ops = []
+    for d, w in segs.items():
+        horiz = d in "lr"
+        sign = 1 if d in "ru" else -1
+        perp = ("u", "d") if horiz else ("l", "r")
+        edge = (c.w if sign > 0 else 0) if horiz else (c.top if sign > 0 else c.bottom)
+        center = c.cx if horiz else c.cy
+        line_at = c.cy if horiz else c.cx
+        if w in "lh":
+            t = thick[w]
+            start = single_start(perp, sign, center)
+            if dashes:
+                ops += dashed(horiz, start, edge, center, t, dashes, c)
+            else:
+                ops += bar(horiz, start, edge, line_at, t)
+        else:
+            # two lines: for a horizontal stroke the upper one faces "u", the lower one "d"
+            for side, side_dir in ((1, perp[0] if horiz else "r"), (-1, perp[1] if horiz else "l")):
+                start = double_start(perp, side_dir, sign, center)
+                ops += bar(horiz, start, edge, line_at + side * off, DOUBLE_LINE)
+    return ops
+
+
+def bar(horiz, a, b, pos, t):
+    lo, hi = min(a, b), max(a, b)
+    if horiz:
+        return M.rect(lo, pos - t / 2, hi, pos + t / 2)
+    return M.rect(pos - t / 2, lo, pos + t / 2, hi)
+
+
+def dashed(horiz, a, b, center, t, n, c):
+    length = (c.w if horiz else c.top - c.bottom) / n
+    gap = length * 0.3
+    origin = 0 if horiz else c.bottom
+    ops = []
+    for k in range(n):
+        lo = origin + k * length + gap / 2
+        hi = lo + length - gap
+        lo, hi = max(lo, min(a, b)), min(hi, max(a, b))
+        if hi > lo:
+            ops += bar(horiz, lo, hi, c.cy if horiz else c.cx, t)
+    return ops
+
+
+def arc_glyph(segs, c):
+    """Rounded corner: a quarter circle from the middle of one edge to the middle of
+    the other, with straight runs where the cell is longer than the radius."""
+    r = c.w / 2
+    sx = 1 if "r" in segs else -1
+    sy = 1 if "u" in segs else -1
+    ox, oy = c.cx + sx * r, c.cy + sy * r          # circle centre, towards the open corner
+    a0 = math.atan2(-sy, 0)                        # where the horizontal run meets the arc
+    a1 = math.atan2(0, -sx)                        # where the vertical run meets the arc
+    sweep = (a1 - a0 + math.pi) % (2 * math.pi) - math.pi
+    steps = 16
+    outer, inner = [], []
+    for k in range(steps + 1):
+        ang = a0 + sweep * k / steps
+        outer.append((ox + (r + LIGHT / 2) * math.cos(ang), oy + (r + LIGHT / 2) * math.sin(ang)))
+        inner.append((ox + (r - LIGHT / 2) * math.cos(ang), oy + (r - LIGHT / 2) * math.sin(ang)))
+    ops = polygon(outer + inner[::-1])
+    ops += bar(True, c.cx + sx * r, c.w if sx > 0 else 0, c.cy, LIGHT)
+    ops += bar(False, c.cy + sy * r, c.top if sy > 0 else c.bottom, c.cx, LIGHT)
+    return ops
+
+
+def polygon(pts):
+    area = M.signed_area(pts)
+    if (area < 0) != M.CLOCKWISE:
+        pts = pts[::-1]
+    return [("moveTo", (pts[0],))] + [("lineTo", (p,)) for p in pts[1:]] + [("closePath", ())]
+
+
+def stroke_line(p0, p1, t):
+    (x0, y0), (x1, y1) = p0, p1
+    dx, dy = x1 - x0, y1 - y0
+    L = math.hypot(dx, dy)
+    nx, ny = -dy / L * t / 2, dx / L * t / 2
+    return polygon([(x0 + nx, y0 + ny), (x1 + nx, y1 + ny), (x1 - nx, y1 - ny), (x0 - nx, y0 - ny)])
+
+
+def round_line(p0, p1, t):
+    """A stroke with round ends, like the font's own pen."""
+    return stroke_line(p0, p1, t) + M.circle(p0, t / 2) + M.circle(p1, t / 2)
+
+
+# ---------------------------------------------------------------- blocks
+
+def block_glyph(cp, c):
+    w, top, bot = c.w, c.top, c.bottom
+    h = top - bot
+    R = lambda x0, y0, x1, y1: M.rect(x0, y0, x1, y1)
+    if cp == 0x2580:
+        return R(0, bot + h / 2, w, top)
+    if 0x2581 <= cp <= 0x2588:            # lower n/8
+        return R(0, bot, w, bot + h * (cp - 0x2580) / 8)
+    if 0x2589 <= cp <= 0x258F:            # left n/8, from 7/8 down
+        return R(0, bot, w * (0x2590 - cp) / 8, top)
+    if cp == 0x2590:
+        return R(w / 2, bot, w, top)
+    if cp in (0x2591, 0x2592, 0x2593):    # shades: a grid of squares
+        share = {0x2591: 0.25, 0x2592: 0.5, 0x2593: 0.75}[cp]
+        cols, rows = 4, 9
+        cw, rh = w / cols, h / rows
+        ops = []
+        for i in range(cols):
+            for j in range(rows):
+                if cp == 0x2592 and (i + j) % 2:
+                    continue
+                if cp == 0x2591 and (i % 2 or j % 2):
+                    continue
+                if cp == 0x2593 and (i % 2 and j % 2):
+                    continue
+                ops += R(i * cw, bot + j * rh, (i + 1) * cw, bot + (j + 1) * rh)
+        return ops
+    if cp == 0x2594:
+        return R(0, top - h / 8, w, top)
+    if cp == 0x2595:
+        return R(w * 7 / 8, bot, w, top)
+    quads = {0x2596: "3", 0x2597: "4", 0x2598: "1", 0x2599: "134", 0x259A: "14",
+             0x259B: "123", 0x259C: "124", 0x259D: "2", 0x259E: "23", 0x259F: "234"}
+    if cp in quads:
+        boxes = {"1": (0, bot + h / 2, w / 2, top), "2": (w / 2, bot + h / 2, w, top),
+                 "3": (0, bot, w / 2, bot + h / 2), "4": (w / 2, bot, w, bot + h / 2)}
+        return [op for q in quads[cp] for op in R(*boxes[q])]
+    return None
+
+
+# ---------------------------------------------------------------- braille
+
+def braille_glyph(cp, c):
+    bits = cp - 0x2800
+    # dot numbers 1..8 -> (column, row from top)
+    where = {0: (0, 0), 1: (0, 1), 2: (0, 2), 3: (1, 0), 4: (1, 1), 5: (1, 2), 6: (0, 3), 7: (1, 3)}
+    h = c.top - c.bottom
+    r = c.w * 0.11
+    ops = []
+    for bit, (col, row) in where.items():
+        if bits & (1 << bit):
+            x = c.w * (0.3 if col == 0 else 0.7)
+            y = c.top - h * (0.14 + row * 0.24)
+            ops += M.circle((x, y), r)
+    return ops
+
+
+# ---------------------------------------------------------------- powerline
+
+def powerline_glyph(cp, c, gs, cmap):
+    w, top, bot, cy = c.w, c.top, c.bottom, c.cy
+    if cp == 0xE0B0:
+        return polygon([(0, top), (w, cy), (0, bot)])
+    if cp == 0xE0B2:
+        return polygon([(w, top), (0, cy), (w, bot)])
+    if cp == 0xE0B1:
+        return stroke_line((0, top), (w, cy), LIGHT) + stroke_line((w, cy), (0, bot), LIGHT)
+    if cp == 0xE0B3:
+        return stroke_line((w, top), (0, cy), LIGHT) + stroke_line((0, cy), (w, bot), LIGHT)
+    t = 64
+    if cp == 0xE0A0:   # branch: a line with a fork joining it
+        x0, x1 = w * 0.32, w * 0.72
+        y0, y1, yb = cy + 300, cy - 300, cy + 170
+        ops = round_line((x0, y1 + 70), (x0, y0 - 70), t)
+        ops += circle_ring((x0, y0), 62, t * 0.8) + circle_ring((x0, y1), 62, t * 0.8)
+        ops += circle_ring((x1, yb + 60), 62, t * 0.8)
+        ops += round_line((x1, yb), (x1, cy - 20), t) + round_line((x1, cy - 20), (x0, y1 + 140), t)
+        return ops
+    if cp == 0xE0A2:   # padlock
+        body = M.rect(w * 0.15, cy - 260, w * 0.85, cy + 60)
+        shackle = []
+        r = w * 0.22
+        for k in range(13):
+            ang = math.pi * k / 12
+            shackle.append((c.cx + r * math.cos(ang), cy + 60 + r * 1.3 * math.sin(ang)))
+        ops = body
+        for a, b in zip(shackle, shackle[1:]):
+            ops += round_line(a, b, t)
+        return ops
+    if cp == 0xE0A1:   # "LN", line number
+        ops = []
+        for ch, (dx, dy) in (("L", (-w * 0.2, 180)), ("N", (w * 0.2, -180))):
+            g = M.record(gs, cmap[ord(ch)])
+            b = M.bounds(g)
+            k = 0.5
+            ops += M.transformed(g, k, c.cx + dx - k * (b[0] + b[2]) / 2, k, cy + dy - k * (b[1] + b[3]) / 2)
+        return ops
+    return None
+
+
+def circle_ring(center, r, t):
+    """A ring: outer circle with the inner one cut out (inner turns the other way)."""
+    outer = M.circle(center, r + t / 2)
+    inner = M.circle(center, r - t / 2)
+    pts = M.polygon_points(inner)[0][::-1]
+    return outer + [("moveTo", (pts[0],))] + [("lineTo", (p,)) for p in pts[1:]] + [("closePath", ())]
+
+
+# ---------------------------------------------------------------- from the font's own glyphs
+
+def from_font(cp, c, gs, cmap, weight):
+    def g(ch):
+        return M.record(gs, cmap[ord(ch) if isinstance(ch, str) else ch])
+
+    def fit(ops, k, cx, cy):
+        b = M.bounds(ops)
+        out = M.transformed(ops, k, cx - k * (b[0] + b[2]) / 2, k, cy - k * (b[1] + b[3]) / 2)
+        return weight(out, 68 * (1 - k), 68 * (1 - k)) if abs(1 - k) > 0.02 else out
+
+    hy = M.bounds(g("-"))
+    axis = (hy[1] + hy[3]) / 2
+    x_top = M.bounds(g("x"))[3]
+    t = 68
+    if cp == 0x2022:                               # bullet
+        return fit(g(0x25CF), 0.5, c.cx, axis)
+    if cp in (0x2713, 0x2714):                     # check mark
+        tw = t if cp == 0x2713 else t * 1.5
+        a, b, d = (c.w * 0.14, axis + 20), (c.w * 0.4, axis - 170), (c.w * 0.88, axis + 260)
+        return round_line(a, b, tw) + round_line(b, d, tw)
+    if cp in (0x2717, 0x2718):                     # ballot x
+        tw = t if cp == 0x2717 else t * 1.5
+        s = c.w * 0.36
+        return round_line((c.cx - s, axis + s), (c.cx + s, axis - s), tw) + \
+            round_line((c.cx - s, axis - s), (c.cx + s, axis + s), tw)
+    if cp == 0x2039:
+        return fit(g("<"), 0.7, c.cx, axis)
+    if cp == 0x203A:
+        return fit(g(">"), 0.7, c.cx, axis)
+    if cp == 0x201E:                               # „ low double quote
+        q = g(0x201D)
+        b = M.bounds(q)
+        return M.transformed(q, 1.0, 0.0, 1.0, -b[1] - 60)
+    if cp == 0x201A:                               # ‚
+        q = g(0x2019)
+        b = M.bounds(q)
+        return M.transformed(q, 1.0, 0.0, 1.0, -b[1] - 60)
+    if cp == 0x203C:                               # ‼
+        e = g("!")
+        b = M.bounds(e)
+        k = 0.85
+        return fit(e, k, c.w * 0.3, (b[1] + b[3]) / 2) + fit(e, k, c.w * 0.7, (b[1] + b[3]) / 2)
+    if cp == 0xB5:                                 # µ from Greek mu
+        return g(0x3BC)
+    if cp == 0xA6:                                 # broken bar
+        b = M.bounds(g("|"))
+        mid = (b[1] + b[3]) / 2
+        return round_line((c.cx, b[1] + t / 2), (c.cx, mid - 70), t) + round_line((c.cx, mid + 70), (c.cx, b[3] - t / 2), t)
+    if cp == 0xAF:                                 # macron
+        return round_line((c.w * 0.18, 700), (c.w * 0.82, 700), t)
+    if cp == 0x23FA:                               # ⏺ record (Claude Code's tool marker)
+        return fit(g(0x25CF), 0.7, c.cx, axis)
+    if cp == 0x23BF:                               # ⎿ (Claude Code's result corner)
+        y = x_top * 0.35
+        return round_line((c.w * 0.3, c.top - 40), (c.w * 0.3, y), t) + round_line((c.w * 0.3, y), (c.w, y), t)
+    if cp == 0xFFFD:                               # replacement character: diamond with a ? cut out
+        import pathops
+        from fontTools.pens.recordingPen import RecordingPen
+        dia = polygon([(c.cx, c.top - 60), (c.w - 10, c.cy), (c.cx, c.bottom + 60), (10, c.cy)])
+        q = fit(g("?"), 0.62, c.cx, c.cy)
+        a, b = pathops.Path(), pathops.Path()
+        for path, ops in ((a, dia), (b, q)):
+            pen = path.getPen()
+            for op, args in ops:
+                getattr(pen, op)(*args)
+        out = pathops.op(a, b, pathops.PathOp.DIFFERENCE)
+        rec = RecordingPen()
+        out.draw(rec)
+        return rec.value
+    # superscript and subscript digits
+    sup = {0x2070: "0", 0x2074: "4", 0x2075: "5", 0x2076: "6", 0x2077: "7", 0x2078: "8", 0x2079: "9"}
+    sub = {0x2080 + n: str(n) for n in range(10)}
+    if cp in sup or cp in sub:
+        d = g(sup.get(cp) or sub.get(cp))
+        return fit(d, 0.6, c.cx, 600 if cp in sup else -40)
+    return None
+
+
+# Latin Extended-A: combining mark -> how to draw the accent
+def latin_ext_a(font, gs, cmap, c, weight, made):
+    def g(cp):
+        return M.record(gs, cmap[cp])
+
+    def accent(mark):
+        if mark == 0x304:                                   # macron
+            return round_line((0, 0), (220, 0), 64)
+        if mark == 0x306:                                   # breve: a small cup
+            pts = [(110 + 110 * math.cos(math.pi + math.pi * k / 10), 110 * math.sin(math.pi + math.pi * k / 10) + 110)
+                   for k in range(11)]
+            out = []
+            for a, b in zip(pts, pts[1:]):
+                out += round_line(a, b, 56)
+            return out
+        if mark == 0x307:                                   # dot above
+            return M.circle((0, 0), 48)
+        if mark == 0x30C:                                   # caron: circumflex upside down
+            ci = g(0x5E)
+            b = M.bounds(ci)
+            return flip_v(ci, b)
+        if mark == 0x30B:                                   # double acute
+            a = g(0xB4)
+            b = M.bounds(a)
+            return M.transformed(a, 0.75, -60, 0.75, 0) + M.transformed(a, 0.75, 90, 0.75, 0)
+        if mark == 0x328:                                   # ogonek: cedilla mirrored
+            ce = g(0xB8)
+            b = M.bounds(ce)
+            return flip_h(ce, b)
+        return None
+
+    for cp in range(0x100, 0x180):
+        if cp in cmap or cp in made:
+            continue
+        parts = unicodedata.decomposition(chr(cp)).split()
+        if len(parts) != 2 or parts[0].startswith("<"):
+            continue
+        base, mark = int(parts[0], 16), int(parts[1], 16)
+        acc = accent(mark)
+        if acc is None or base not in cmap:
+            continue
+        base_ops = g(base)
+        if chr(base) in "ij" and mark != 0x328:
+            cs = M.polygon_points_ops(base_ops)
+            dot = max(cs, key=lambda q: M.bounds(q)[1])
+            base_ops = [op for q in cs if q is not dot for op in q]
+        bb, ab = M.bounds(base_ops), M.bounds(acc)
+        upper = chr(base).isupper()
+        k = 0.75 if upper else 0.85
+        if mark == 0x328:
+            # under the right foot of the letter
+            dx = bb[2] - 40 - k * (ab[0] + ab[2]) / 2
+            dy = bb[1] + 20 - k * ab[3]
+        elif chr(base) in "dlLtk" and mark == 0x30C:
+            # ď ľ Ľ ť: a small apostrophe-like caron to the right of the ascender
+            q = g(0x2019)
+            qb = M.bounds(q)
+            made[cp] = base_ops + M.transformed(q, 0.8, bb[2] + 10 - 0.8 * qb[0], 0.8, bb[3] - 0.8 * qb[3])
+            continue
+        else:
+            dx = (bb[0] + bb[2]) / 2 - k * (ab[0] + ab[2]) / 2
+            dy = bb[3] + 50 - k * ab[1]
+            room = 880 - dy
+            if k * (ab[3] - ab[1]) > room:
+                k = room / (ab[3] - ab[1])
+                dy = bb[3] + 50 - k * ab[1]
+                dx = (bb[0] + bb[2]) / 2 - k * (ab[0] + ab[2]) / 2
+        made[cp] = base_ops + M.transformed(acc, k, dx, k, dy)
+
+    # letters with a stroke or other shape, not a mark
+    def with_bar(base, y_frac, x0f=0.15, x1f=0.85):
+        b = M.bounds(g(base))
+        y = b[1] + (b[3] - b[1]) * y_frac
+        return g(base) + round_line((b[0] + (b[2] - b[0]) * x0f, y), (b[0] + (b[2] - b[0]) * x1f, y), 60)
+
+    extra = {
+        0x110: lambda: with_bar(ord("D"), 0.5, -0.15, 0.45),   # Đ
+        0x111: lambda: with_bar(ord("d"), 0.78, 0.45, 1.05),   # đ
+        0x126: lambda: with_bar(ord("H"), 0.75, -0.05, 1.05),  # Ħ
+        0x127: lambda: with_bar(ord("h"), 0.8, -0.1, 0.55),    # ħ
+        0x166: lambda: with_bar(ord("T"), 0.45, 0.2, 0.8),     # Ŧ
+        0x167: lambda: with_bar(ord("t"), 0.35, 0.1, 0.9),     # ŧ
+    }
+    for cp, fn in extra.items():
+        if cp not in cmap:
+            made[cp] = fn()
+    for cp, base in ((0x141, "L"), (0x142, "l")):            # Ł ł: a slash through the stem
+        if cp in cmap:
+            continue
+        b = M.bounds(g(ord(base)))
+        sx = b[0] + 70 if base == "L" else (b[0] + b[2]) / 2
+        cy = b[1] + (b[3] - b[1]) * 0.5
+        made[cp] = g(ord(base)) + round_line((sx - 110, cy - 70), (sx + 110, cy + 70), 60)
+    if 0x17F not in cmap:                                    # ſ long s: f without its crossbar
+        f_ops = g(ord("f"))
+        fb = M.bounds(f_ops)
+        xs = M.crossings(f_ops, fb[1] + 60)                  # the stem, low down
+        if len(xs) >= 2:
+            # the crossbar: the lowest height (above the stem's foot) where f is wider than its stem
+            stem_w = xs[1] - xs[0]
+            bar_top = None
+            y = fb[1] + 60
+            while y < fb[3]:
+                row = M.crossings(f_ops, y)
+                if row and row[-1] - row[0] > stem_w * 1.8:
+                    while y < fb[3]:
+                        row = M.crossings(f_ops, y)
+                        if not row or row[-1] - row[0] <= stem_w * 1.8:
+                            bar_top = y
+                            break
+                        y += 5
+                    break
+                y += 5
+            if bar_top:
+                top = M.clip_polygon(f_ops, [(-9999, bar_top), (-9999, 9999), (9999, 9999), (9999, bar_top)])
+                stem = M.clip_polygon(f_ops, [(xs[0] - 2, -9999), (xs[0] - 2, bar_top + 5),
+                                              (xs[1] + 2, bar_top + 5), (xs[1] + 2, -9999)])
+                made[0x17F] = top + stem
+    if 0x131 not in cmap:                                    # ı dotless i
+        cs = M.polygon_points_ops(g(ord("i")))
+        dot = max(cs, key=lambda q: M.bounds(q)[1])
+        made[0x131] = [op for q in cs if q is not dot for op in q]
+
+
+def flip_v(ops, b):
+    from fontTools.pens.recordingPen import RecordingPen
+    from fontTools.pens.reverseContourPen import ReverseContourPen
+    f = M.transformed(ops, 1.0, 0.0, -1.0, b[1] + b[3])
+    rec = RecordingPen()
+    rev = ReverseContourPen(rec)
+    for op, args in f:
+        getattr(rev, op)(*args)
+    return rec.value
+
+
+def flip_h(ops, b):
+    from fontTools.pens.recordingPen import RecordingPen
+    from fontTools.pens.reverseContourPen import ReverseContourPen
+    f = M.transformed(ops, -1.0, b[0] + b[2])
+    rec = RecordingPen()
+    rev = ReverseContourPen(rec)
+    for op, args in f:
+        getattr(rev, op)(*args)
+    return rec.value
+
+
+# ---------------------------------------------------------------- control pictures
+
+CONTROL_NAMES = ("NUL SOH STX ETX EOT ENQ ACK BEL BS HT LF VT FF CR SO SI "
+                 "DLE DC1 DC2 DC3 DC4 NAK SYN ETB CAN EM SUB ESC FS GS RS US SP DEL").split()
+
+
+def control_picture(cp, c, gs, cmap, weight):
+    """U+2400..2426: the control code's standard short name in small capitals."""
+    def letters(text):
+        # Two letters step down diagonally. Three sit as two over one, which leaves room
+        # for larger letters than a diagonal of three. The pair on top is made narrower
+        # (kx) than tall (ky) so it keeps clear of the cell edges and of its neighbours.
+        n = len(text)
+        if n == 2:
+            spots = [(0.34, 560, 0.42, 0.52), (0.66, 150, 0.42, 0.52)]
+        else:
+            spots = [(0.32, 560, 0.36, 0.48), (0.68, 560, 0.36, 0.48), (0.5, 150, 0.42, 0.48)]
+        ops = []
+        for ch, (xf, y, kx, ky) in zip(text, spots):
+            g = M.record(gs, cmap[ord(ch)])
+            b = M.bounds(g)
+            one = M.transformed(g, kx, c.w * xf - kx * (b[0] + b[2]) / 2, ky, y - ky * (b[1] + b[3]) / 2)
+            ops += weight(one, 68 * (1 - kx) * 0.5, 68 * (1 - ky) * 0.5)
+        return ops
+
+    idx = cp - 0x2400
+    if idx < len(CONTROL_NAMES):
+        return letters(CONTROL_NAMES[idx])
+    if cp == 0x2422:                       # blank symbol: b with a stroke through it
+        g = M.record(gs, cmap[ord("b")])
+        b = M.bounds(g)
+        return g + round_line((b[0] - 20, b[1] + 120), (b[2] + 20, b[3] - 120), 60)
+    if cp == 0x2423:                       # open box, the visible space
+        y0, y1 = 0, 180
+        return round_line((c.w * 0.12, y1), (c.w * 0.12, y0), 64) + \
+            round_line((c.w * 0.12, y0), (c.w * 0.88, y0), 64) + round_line((c.w * 0.88, y0), (c.w * 0.88, y1), 64)
+    if cp == 0x2424:                       # newline
+        return letters("NL")
+    if cp == 0x2425:                       # delete form two: hatching
+        return round_line((c.w * 0.15, 120), (c.w * 0.45, 620), 60) + \
+            round_line((c.w * 0.4, 120), (c.w * 0.7, 620), 60) + round_line((c.w * 0.65, 120), (c.w * 0.95, 620), 60)
+    if cp == 0x2426:                       # substitute form two: a reversed question mark
+        g = M.record(gs, cmap[ord("?")])
+        return flip_h(g, M.bounds(g))
+    return None
+
+
+# ---------------------------------------------------------------- conjoining jamo
+
+COMPAT_INITIAL = [0x3131, 0x3132, 0x3134, 0x3137, 0x3138, 0x3139, 0x3141, 0x3142, 0x3143, 0x3145,
+                  0x3146, 0x3147, 0x3148, 0x3149, 0x314A, 0x314B, 0x314C, 0x314D, 0x314E]
+COMPAT_FINAL = [None, 0x3131, 0x3132, 0x3133, 0x3134, 0x3135, 0x3136, 0x3137, 0x3139, 0x313A, 0x313B,
+                0x313C, 0x313D, 0x313E, 0x313F, 0x3140, 0x3141, 0x3142, 0x3144, 0x3145, 0x3146,
+                0x3147, 0x3148, 0x314A, 0x314B, 0x314C, 0x314D, 0x314E]
+
+
+def add_conjoining_jamo(font, to_glyph):
+    """Modern conjoining jamo (U+1100..), as Hangul written in decomposed form arrives
+    (file names saved on macOS, for one). Each jamo looks like its compatibility jamo.
+    An initial takes two cells; a vowel or final takes none, as terminals count them,
+    and is drawn over the cells before it. Returns the feature code that joins an
+    initial, a vowel and an optional final into the drawn syllable, in ccmp, which stays
+    on even with ligatures turned off."""
+    cmap = font.getBestCmap()
+    gs = font.getGlyphSet()
+    glyf, hmtx = font["glyf"], font["hmtx"]
+    wide = 2 * M.CELL
+    names = {}
+    for i, compat in enumerate(COMPAT_INITIAL):
+        names[0x1100 + i] = (compat, wide, 0)
+    for v in range(21):
+        names[0x1161 + v] = (0x314F + v, 0, -wide)
+    for f in range(1, 28):
+        names[0x11A7 + f] = (COMPAT_FINAL[f], 0, -wide)
+    order = font.getGlyphOrder()
+    new = []
+    for cp, (compat, adv, dx) in names.items():
+        if cp in cmap or compat not in cmap:
+            continue
+        name = f"uni{cp:04X}"
+        ops = M.record(gs, cmap[compat])
+        glyf[name] = to_glyph(M.transformed(ops, 1.0, dx) if dx else ops)
+        hmtx[name] = (adv, 0)
+        new.append(name)
+        for table in font["cmap"].tables:
+            if table.isUnicode():
+                table.cmap[cp] = name
+    font.setGlyphOrder(order + [n for n in new if n not in order])
+    glyf.glyphOrder = font.getGlyphOrder()
+    cmap = font.getBestCmap()
+
+    rules = []
+    for cp in range(0xAC00, 0xD7A4):
+        if cp not in cmap:
+            continue
+        n = cp - 0xAC00
+        i, v, f = n // 588, (n % 588) // 28, n % 28
+        seq = [cmap.get(0x1100 + i), cmap.get(0x1161 + v)] + ([cmap.get(0x11A7 + f)] if f else [])
+        if all(seq):
+            rules.append(f"    sub {' '.join(seq)} by {cmap[cp]};")
+    fea = "lookup hangul_compose {\n" + "\n".join(rules) + "\n} hangul_compose;\n" \
+          "feature ccmp {\n    lookup hangul_compose;\n} ccmp;\n"
+    return new, fea
+
+
+# ---------------------------------------------------------------- Korean extras
+
+def korean_extras(font, gs, cmap, weight, made):
+    """⑯..⑳ and ⒃..⒇: the ring of ⑮ or the parentheses of ⒂ with two new digits inside.
+    ㈝ ㈞: the parentheses of ㈜, drawn in towards the edges, around 오전 and 오후."""
+    def contours(cp):
+        return M.polygon_points_ops(M.record(gs, cmap[cp]))
+
+    def flat(cs):
+        return [op for q in cs for op in q]
+
+    def place(ch, box, kmax_x=None):
+        """A glyph scaled to the box's height (narrower if the box needs it), centred in it."""
+        d = M.record(gs, cmap[ord(ch)])
+        db = M.bounds(d)
+        ky = (box[3] - box[1]) / (db[3] - db[1])
+        kx = min(ky, (box[2] - box[0]) / (db[2] - db[0]))
+        ky = min(ky, kx * 2.4)               # no more than 2.4 times taller than it is wide
+        out = M.transformed(d, kx, (box[0] + box[2]) / 2 - kx * (db[0] + db[2]) / 2,
+                            ky, (box[1] + box[3]) / 2 - ky * (db[1] + db[3]) / 2)
+        # a narrower squeeze thins the upright strokes: bring them back to the
+        # thickness of the crossing strokes, no further (small digits stay light)
+        return weight(out, 68 * (ky - kx) * 0.5, 0.0) if ky - kx > 0.02 else out
+
+    def two_digits(n, area):
+        """Two digits at one size, as large as the area allows, set close together."""
+        x0, y0, x1, y1 = area
+        glyphs = []
+        for ch in str(n):
+            g = M.record(gs, cmap[ord(ch)])
+            if ch == "0":
+                # no dot in the zero here: "20" reads as twenty without it
+                cs = M.polygon_points_ops(g)
+                if len(cs) > 2:
+                    dot = min(cs, key=lambda q: (M.bounds(q)[2] - M.bounds(q)[0]) * (M.bounds(q)[3] - M.bounds(q)[1]))
+                    g = [op for q in cs if q is not dot for op in q]
+            glyphs.append(g)
+        bs = [M.bounds(g) for g in glyphs]
+        gap = -6                                          # a touch of overlap: tight, but large
+        # the two share the width in proportion to their own widths, so none is left over
+        kx = ((x1 - x0) - gap) / sum(b[2] - b[0] for b in bs)
+        ky = min((y1 - y0) / max(b[3] - b[1] for b in bs), kx * 2.8)
+        kx = min(kx, ky)
+        out = []
+        widths = [kx * (b[2] - b[0]) for b in bs]
+        total = sum(widths) + gap
+        left = (x0 + x1) / 2 - total / 2
+        cy = (y0 + y1) / 2
+        for g, b, w in zip(glyphs, bs, widths):
+            one = M.transformed(g, kx, left - kx * b[0], ky, cy - ky * (b[1] + b[3]) / 2)
+            out += weight(one, 68 * (ky - kx) * 0.5, 0.0) if ky - kx > 0.02 else one
+            left += w + gap
+        return out
+
+    def squeeze_parens(parens, gb, k=0.6):
+        """Parentheses drawn in towards their outer edges, leaving more room inside."""
+        out = []
+        for q in parens:
+            b = M.bounds(q)
+            anchor = b[0] if b[0] - gb[0] < 15 else b[2]
+            one = M.transformed(q, k, anchor * (1 - k))
+            out += weight(one, 68 * (1 - k) * 0.5, 0.0)
+        # the thickening grows a contour to the right: set each back on its edge
+        fixed = []
+        for q in M.polygon_points_ops(out):
+            b = M.bounds(q)
+            if (b[0] + b[2]) / 2 < (gb[0] + gb[2]) / 2:
+                fixed += M.transformed(q, 1.0, gb[0] - b[0])
+            else:
+                fixed += M.transformed(q, 1.0, gb[2] - b[2])
+        return fixed
+
+    if 0x246E in cmap:                                   # ⑮: keep the ring (the two largest contours)
+        cs = sorted(contours(0x246E), key=lambda q: -(M.bounds(q)[2] - M.bounds(q)[0]))
+        ring = cs[:2]
+        hole = M.bounds(ring[1])
+        hw, hh = hole[2] - hole[0], hole[3] - hole[1]
+        # the whole hole: the digits may touch the ring at its curves
+        area = (hole[0] + hw * 0.05, hole[1] + hh * 0.13, hole[2] - hw * 0.05, hole[3] - hh * 0.13)
+        for n in range(16, 21):
+            cp = 0x246F + (n - 16)
+            if cp not in cmap:
+                made[cp] = flat(ring) + two_digits(n, area)
+
+    if 0x2482 in cmap:                                   # ⒂: keep the parentheses (the outermost contours)
+        cs = contours(0x2482)
+        gb = M.bounds(flat(cs))
+        parens = [q for q in cs if M.bounds(q)[0] - gb[0] < 15 or gb[2] - M.bounds(q)[2] < 15]
+        digits = [q for q in cs if not any(q is p for p in parens)]
+        if len(parens) == 2 and digits:
+            db = M.bounds(flat(digits))
+            sq = squeeze_parens(parens, gb)
+            pcs = M.polygon_points_ops(sq)
+            lp_in = max(M.bounds(q)[2] for q in pcs if (M.bounds(q)[0] + M.bounds(q)[2]) / 2 < (gb[0] + gb[2]) / 2)
+            rp_in = min(M.bounds(q)[0] for q in pcs if (M.bounds(q)[0] + M.bounds(q)[2]) / 2 >= (gb[0] + gb[2]) / 2)
+            # up to the parentheses and a little into them, nearly their full height
+            ph = M.bounds(sq)
+            area = (lp_in - 12, ph[1] + (ph[3] - ph[1]) * 0.1, rp_in + 12, ph[3] - (ph[3] - ph[1]) * 0.1)
+            for n in range(16, 21):
+                cp = 0x2483 + (n - 16)
+                if cp not in cmap:
+                    made[cp] = sq + two_digits(n, area)
+
+    if 0x321C in cmap:                                   # ㈜ -> ㈝ (오전), ㈞ (오후)
+        cs = contours(0x321C)
+        gb = M.bounds(flat(cs))
+        parens = [q for q in cs if M.bounds(q)[0] - gb[0] < 15 or gb[2] - M.bounds(q)[2] < 15]
+        inner = [q for q in cs if not any(q is p for p in parens)]
+        if len(parens) == 2 and inner:
+            ib = M.bounds(flat(inner))
+            squeezed = []
+            for q in parens:
+                b = M.bounds(q)
+                left_side = b[0] - gb[0] < 15
+                anchor = b[0] if left_side else b[2]      # keep the outer edge where it is
+                one = M.transformed(q, 0.55, anchor * 0.45)
+                squeezed += weight(one, 68 * 0.45 * 0.6, 0.0)
+            sq = M.bounds(squeezed)
+            lp_in = max(M.bounds(q)[2] for q in M.polygon_points_ops(squeezed) if M.bounds(q)[0] - sq[0] < 15)
+            rp_in = min(M.bounds(q)[0] for q in M.polygon_points_ops(squeezed) if sq[2] - M.bounds(q)[2] < 15)
+            for cp, word in ((0x321D, "오전"), (0x321E, "오후")):
+                if cp in cmap:
+                    continue
+                x0, x1 = lp_in + 10, rp_in - 10
+                mid = (x0 + x1) / 2
+                y0, y1 = ib[1] + 40, ib[3] - 10
+                ops = squeezed + place(word[0], (x0, y0, mid - 5, y1)) + place(word[1], (mid + 5, y0, x1, y1))
+                # keep it inside its two cells, with room for the Bold to grow
+                ob = M.bounds(ops)
+                lo, hi = 45, 2 * M.CELL - 45
+                if ob[0] < lo or ob[2] > hi:
+                    k = (hi - lo) / (ob[2] - ob[0])
+                    ops = M.transformed(ops, k, lo - k * ob[0])
+                made[cp] = ops
+
+
+# ---------------------------------------------------------------- driver
+
+FROM_FONT = [0x2022, 0x2713, 0x2714, 0x2717, 0x2718, 0x2039, 0x203A, 0x201E, 0x201A, 0x203C,
+             0xB5, 0xA6, 0xAF, 0x23FA, 0x23BF, 0xFFFD, 0x2070] + list(range(0x2074, 0x207A)) + \
+            list(range(0x2080, 0x208A))
+POWERLINE = [0xE0A0, 0xE0A1, 0xE0A2, 0xE0B0, 0xE0B1, 0xE0B2, 0xE0B3]
+
+
+def add_symbols(font, to_glyph, weight):
+    """Adds or redraws the symbols. Returns the glyph names it wrote."""
+    cell = Cell(font)
+    gs = font.getGlyphSet()
+    cmap = font.getBestCmap()
+    glyf, hmtx = font["glyf"], font["hmtx"]
+    made = {}
+    # geometry: drawn even where the font has the code point, so all of it joins up
+    for cp in range(0x2500, 0x2580):
+        if unicodedata.name(chr(cp), ""):
+            made[cp] = box_glyph(cp, cell)
+    for cp in range(0x2580, 0x25A0):
+        ops = block_glyph(cp, cell)
+        if ops is not None:
+            made[cp] = ops
+    for cp in range(0x2800, 0x2900):
+        made[cp] = braille_glyph(cp, cell)
+    for cp in POWERLINE:
+        made[cp] = powerline_glyph(cp, cell, gs, cmap)
+    # from the font, only where it has nothing
+    for cp in FROM_FONT:
+        if cp not in cmap:
+            ops = from_font(cp, cell, gs, cmap, weight)
+            if ops:
+                made[cp] = ops
+    for cp in range(0x2400, 0x2427):
+        if cp not in cmap:
+            ops = control_picture(cp, cell, gs, cmap, weight)
+            if ops:
+                made[cp] = ops
+    latin_ext_a(font, gs, cmap, cell, weight, made)
+    korean_extras(font, gs, cmap, weight, made)
+    if 0x3C2 not in cmap and ord("c") in cmap:              # ς final sigma: c with a tail
+        cb = M.bounds(M.record(gs, cmap[ord("c")]))
+        made[0x3C2] = M.record(gs, cmap[ord("c")]) + round_line(
+            ((cb[0] + cb[2]) / 2, cb[1] + 30), ((cb[0] + cb[2]) / 2 + 60, cb[1] - 160), 60)
+
+    names = []
+    order = font.getGlyphOrder()
+    new_names = []
+    for cp, ops in made.items():
+        if not ops:
+            continue
+        name = cmap.get(cp) or f"uni{cp:04X}"
+        glyf[name] = to_glyph(ops)
+        # two cells for what Unicode calls wide (㈝ ㈞), one for the rest
+        wide = unicodedata.east_asian_width(chr(cp)) in "WF"
+        hmtx[name] = (2 * M.CELL if wide else M.CELL, 0)
+        names.append(name)
+        if name not in order:
+            new_names.append(name)
+        for table in font["cmap"].tables:
+            if table.isUnicode():
+                table.cmap[cp] = name
+    font.setGlyphOrder(order + new_names)
+    glyf.glyphOrder = font.getGlyphOrder()
+    return names
