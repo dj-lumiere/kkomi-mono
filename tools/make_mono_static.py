@@ -359,25 +359,30 @@ def add_accented(font):
     made = {}
     # Latin-1 and Latin Extended-A letters, Greek letters with tonos or dialytika
     for cp in list(range(0xC0, 0x180)) + list(range(0x386, 0x3D0)):
-        if cp in cmap:
-            continue
         parts = unicodedata.decomposition(chr(cp)).split()
         if len(parts) != 2 or parts[0].startswith("<"):
             continue
         base, mark = int(parts[0], 16), int(parts[1], 16)
+        # í ì î ï and the rest are built again over the font's own: its i is redrawn
+        if cp in cmap and base != ord("i"):
+            continue
         accent = ACCENT_FOR.get(mark)
         if base not in cmap or accent not in cmap:
             continue
         base_ops = M.record(gs, cmap[base])
+        dot_cx = None
         if chr(base) in "ij":
             contours = M.polygon_points_ops(base_ops)
             dot = max(contours, key=lambda c: M.bounds(c)[1])
+            db = M.bounds(dot)
+            dot_cx = (db[0] + db[2]) / 2
             base_ops = [op for c in contours if c is not dot for op in c]
         acc_ops = M.record(gs, cmap[accent])
         bb, ab = M.bounds(base_ops), M.bounds(acc_ops)
         upper = chr(base).isupper()
         k = (0.5 if upper else 0.55) if mark == 0x303 else (0.7 if upper else 0.8)
-        cx = (bb[0] + bb[2]) / 2
+        # over the stem, where the dot was (the i's crossbar reaches out to the left)
+        cx = dot_cx if dot_cx is not None else (bb[0] + bb[2]) / 2
         acx = (ab[0] + ab[2]) / 2
         if mark == 0x327:
             dy = bb[1] + 30 - k * ab[3]
@@ -390,7 +395,7 @@ def add_accented(font):
         placed = M.transformed(acc_ops, k, cx - k * acx, k, dy)
         if k < 0.98:
             placed = embolden(placed, 68 * (1 - k) * 0.6, 68 * (1 - k) * 0.6)
-        name = f"uni{cp:04X}"
+        name = cmap.get(cp) or f"uni{cp:04X}"
         glyf[name] = to_tt_glyph_quadratic(base_ops + placed)
         hmtx[name] = (M.CELL, 0)
         made[cp] = name
@@ -555,6 +560,7 @@ def main():
     print(f"conjoining jamo: {len(jamo)}")
     ligs = M.add_ligatures(font, kinds, relation=((1.65, 0.72), embolden), extra_fea=compose_fea)
     ligs += jamo
+    symbols.redraw_i_l(font, to_tt_glyph_quadratic)
     accented = add_accented(font)
     print(f"accented letters: {len(accented)}")
     ligs += accented

@@ -419,9 +419,11 @@ def latin_ext_a(font, gs, cmap, c, weight, made):
         if acc is None or base not in cmap:
             continue
         base_ops = g(base)
+        dot_cx = None
         if chr(base) in "ij" and mark != 0x328:
             cs = M.polygon_points_ops(base_ops)
             dot = max(cs, key=lambda q: M.bounds(q)[1])
+            dot_cx = (M.bounds(dot)[0] + M.bounds(dot)[2]) / 2
             base_ops = [op for q in cs if q is not dot for op in q]
         bb, ab = M.bounds(base_ops), M.bounds(acc)
         upper = chr(base).isupper()
@@ -455,7 +457,9 @@ def latin_ext_a(font, gs, cmap, c, weight, made):
             made[cp] = base_ops + M.transformed(q, 0.8, bb[2] + 10 - 0.8 * qb[0], 0.8, bb[3] - 0.8 * qb[3])
             continue
         else:
-            dx = (bb[0] + bb[2]) / 2 - k * (ab[0] + ab[2]) / 2
+            # over the stem of i and j (where the dot was), the middle of the others
+            mid = dot_cx if dot_cx is not None else (bb[0] + bb[2]) / 2
+            dx = mid - k * (ab[0] + ab[2]) / 2
             dy = bb[3] + 50 - k * ab[1]
             room = 880 - dy
             if k * (ab[3] - ab[1]) > room:
@@ -1188,16 +1192,17 @@ def math_operators(gs, cmap, weight, made):
 
     # ∀ ∃ ⊥ ∂ : letters turned over
     A = rec("A")
-    # √: in a box of half an em, from the baseline up, through (0, 0.5), (0.5, 0) and
-    # (1, 1) of that box, drawn with the round pen and kept inside the cell
+    # √: in a box of half an em, from the baseline up, through (0, 0.35), (0.5, 0) and
+    # (1, 1.5) of that box (the long right arm keeps it from reading as a check mark),
+    # drawn with the round pen and kept inside the cell
     s = stroke
     em2 = M.CELL
 
     def in_box(u, v):
         return (s / 2 + u * (em2 - s), s / 2 + v * (em2 - s))
 
-    made[0x221A] = (round_line(in_box(0, 0.5), in_box(0.5, 0), s)
-                    + round_line(in_box(0.5, 0), in_box(1, 1), s))                # √
+    made[0x221A] = (round_line(in_box(0, 0.35), in_box(0.5, 0), s)
+                    + round_line(in_box(0.5, 0), in_box(1, 1.5), s))              # √
 
     # ∀: two legs meeting at the foot and a bar, drawn with the font's round pen so no
     # end of the A's crossbar is left sticking out
@@ -1446,16 +1451,92 @@ def regular_l(gs, cmap):
     ], s)
 
 
+def diamond_dot(cx, cy, hw=88, hh=96, soft=26):
+    """The dot of i and j: a diamond with its corners rounded by the round pen."""
+    import pathops
+    from fontTools.pens.recordingPen import RecordingPen
+    pts = [(cx, cy + hh), (cx + hw, cy), (cx, cy - hh), (cx - hw, cy)]
+    inner = [(cx + (x - cx) * (1 - soft / hw), cy + (y - cy) * (1 - soft / hh)) for x, y in pts]
+    path = pathops.Path()
+    pen = path.getPen()
+    pen.moveTo(inner[0])
+    for q in inner[1:]:
+        pen.lineTo(q)
+    pen.closePath()
+    edge = pathops.Path()
+    edge.addPath(path)
+    edge.stroke(2 * soft, pathops.LineCap.ROUND_CAP, pathops.LineJoin.ROUND_JOIN, 4)
+    edge.convertConicsToQuads()
+    out = pathops.op(path, edge, pathops.PathOp.UNION)
+    rec = RecordingPen()
+    out.draw(rec)
+    ops = rec.value
+    if (M.signed_area(M.polygon_points(ops)[0]) < 0) != M.CLOCKWISE:
+        from fontTools.pens.reverseContourPen import ReverseContourPen
+        r = RecordingPen()
+        rev = ReverseContourPen(r)
+        for op, args in ops:
+            getattr(rev, op)(*args)
+        ops = r.value
+    return ops
+
+
+def regular_i(gs, cmap):
+    """i as a plain stem of the round pen from the x-height to the baseline, with a
+    diamond for its dot, raised clear of it. The diamond fills the cell a plain stem
+    leaves empty, and tells i from l, 1 and | at small sizes."""
+    s, _ = l_stroke_width(gs, cmap)
+    xh = M.bounds(M.record(gs, cmap[ord("x")]))[3]
+    x = M.CELL / 2
+    body = round_line((x, xh - s / 2), (x, s / 2), s)
+    return body + diamond_dot(x, dot_height(gs, cmap))
+
+
+def dot_height(gs, cmap):
+    """The height of the middle of the diamond on i and on j, the same for both: the
+    font's own i dot raised clear of the stem."""
+    cs = M.polygon_points_ops(M.record(gs, cmap[ord("i")]))
+    db = M.bounds(max(cs, key=lambda q: M.bounds(q)[1]))
+    return (db[1] + db[3]) / 2 + 80
+
+
+def j_with_diamond(gs, cmap):
+    """j with the same diamond as i for its dot, at the same height, over its own stem
+    where the round dot was."""
+    cs = M.polygon_points_ops(M.record(gs, cmap[ord("j")]))
+    dot = max(cs, key=lambda q: M.bounds(q)[1])
+    db = M.bounds(dot)
+    rest = [op for q in cs if q is not dot for op in q]
+    return rest + diamond_dot((db[0] + db[2]) / 2, dot_height(gs, cmap))
+
+
+def redraw_i_l(font, to_glyph):
+    """The new l, i and j, written before anything is built from them (the accented
+    letters, ı, the units lm and lx)."""
+    cmap = font.getBestCmap()
+    gs = font.getGlyphSet()
+    glyf = font["glyf"]
+    if ord("l") in cmap and ord("i") in cmap and ord("x") in cmap:
+        new_l = regular_l(gs, cmap)
+        new_j = j_with_diamond(gs, cmap) if ord("j") in cmap else None
+        new_i = regular_i(gs, cmap)
+        glyf[cmap[ord("l")]] = to_glyph(new_l)
+        glyf[cmap[ord("i")]] = to_glyph(new_i)
+        if new_j:
+            glyf[cmap[ord("j")]] = to_glyph(new_j)
+        if 0x131 in cmap:
+            # ı is the new i without its dot
+            cs = M.polygon_points_ops(new_i)
+            dot = max(cs, key=lambda q: M.bounds(q)[1])
+            glyf[cmap[0x131]] = to_glyph([op for q in cs if q is not dot for op in q])
+
+
 def add_symbols(font, to_glyph, weight):
     """Adds or redraws the symbols. Returns the glyph names it wrote."""
     cell = Cell(font)
     gs = font.getGlyphSet()
     cmap = font.getBestCmap()
     glyf, hmtx = font["glyf"], font["hmtx"]
-    if ord("l") in cmap and 0x2113 in cmap:
-        # l first, so the units drawn below (lm, lx) take the new one
-        glyf[cmap[ord("l")]] = to_glyph(regular_l(gs, cmap))
-        gs = font.getGlyphSet()
     made = {}
     # geometry: drawn even where the font has the code point, so all of it joins up
     for cp in range(0x2500, 0x2580):
