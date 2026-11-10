@@ -66,6 +66,13 @@ LIGATURES = [
     ("less_equal_greater", "<=>"),
     ("equal_equal_equal", "==="),
     ("exclam_equal_equal", "!=="),
+    ("hyphen_hyphen_greater", "-->"),
+    ("less_hyphen_hyphen", "<--"),
+    ("equal_equal_greater", "==>"),
+    ("less_equal_equal", "<=="),
+    ("greater_greater_equal", ">>="),
+    ("equal_less_less", "=<<"),
+    ("tilde_tilde_greater", "~~>"),
     ("hyphen_greater", "->"),
     ("less_hyphen", "<-"),
     ("equal_greater", "=>"),
@@ -73,10 +80,20 @@ LIGATURES = [
     ("exclam_equal", "!="),
     ("less_equal", "<="),     # only when the font has its own ≤ and ≥
     ("greater_equal", ">="),
+    ("tilde_greater", "~>"),
+    ("less_tilde", "<~"),
+    ("less_greater", "<>"),
+    ("bar_greater", "|>"),
+    ("less_bar", "<|"),
+    ("slash_backslash", "/\\"),
+    ("backslash_slash", "\\/"),
 ]
 # A ligature is not formed when one of these stands right before or after it,
-# so `<!--`, `-->`, `<=>` and `====` keep their plain characters.
-OPERATOR_CHARS = "-=<>!"
+# so `<!--`, `<==>`, `<|>` and `====` keep their plain characters.
+OPERATOR_CHARS = "-=<>!~|/\\"
+# These also need a space (or anything but a letter, digit or _) on both sides, so
+# regular expressions (`/\d+/`) and escaped slashes (`http:\/\/`) stay as typed.
+WORD_GUARDED = {"slash_backslash", "backslash_slash"}
 
 
 # ---------------------------------------------------------------- outlines
@@ -527,6 +544,118 @@ def add_ligatures(font, kinds, relation=None, extra_fea=""):
             shapes[name] = (2, transformed(ops, 1.0, W2 / 2 - (ob[0] + ob[2]) / 2,
                                            1.0, axis - (ob[1] + ob[3]) / 2))
 
+    # -->  <--  ==>  <==  : the two-cell arrows, a cell longer
+    shapes["hyphen_hyphen_greater"] = (3, g3 + bar(left_hy, end3, axis))
+    shapes["less_hyphen_hyphen"] = (3, less + bar(start, W3 - (CELL - hyphen[2]), axis))
+    ops = list(g3)
+    for y0, y1 in bars(2, eq_gap):
+        ops += bar(left_eq, shaft_end(g3, y0, y1, True), (y0 + y1) / 2)
+    shapes["equal_equal_greater"] = (3, ops)
+    ops = list(less)
+    for y0, y1 in bars(2, eq_gap):
+        ops += bar(shaft_end(less, y0, y1, False), W3 - (CELL - equal[2]), (y0 + y1) / 2)
+    shapes["less_equal_equal"] = (3, ops)
+
+    # >>=  =<<  : the two chevrons nested close, then = , the group centred in its cells
+    nest = stroke * 2.4
+    group_gap = stroke * 1.4
+    for name, chev, eq_first in (("greater_greater_equal", greater, False), ("equal_less_less", less, True)):
+        pair = chev + transformed(chev, 1.0, nest)
+        pb = bounds(pair)
+        pw, ew = pb[2] - pb[0], equal[2] - equal[0]
+        x0 = (W3 - (pw + group_gap + ew)) / 2
+        if eq_first:
+            ops = transformed(equal_ops, 1.0, x0 - equal[0]) + transformed(pair, 1.0, x0 + ew + group_gap - pb[0])
+        else:
+            ops = transformed(pair, 1.0, x0 - pb[0]) + transformed(equal_ops, 1.0, x0 + pw + group_gap - equal[0])
+        shapes[name] = (3, ops)
+
+    # <>  : the chevrons' open ends meet, a diamond
+    lb, gb = bounds(less), bounds(greater)
+    meet = stroke * 0.8
+    shapes["less_greater"] = (2, transformed(less, 1.0, W2 / 2 + meet / 2 - lb[2])
+                              + transformed(greater, 1.0, W2 / 2 - meet / 2 - gb[0]))
+
+    # |>  <|  : the open end closed by the font's own | , a triangle
+    pipe = record(glyph_set, gname["|"])
+    pib = bounds(pipe)
+    for name, chev, cb, right in (("bar_greater", greater, gb, True), ("less_bar", less, lb, False)):
+        ky = (cb[3] - cb[1]) / (pib[3] - pib[1])
+        side_x = cb[0] + stroke / 2 if right else cb[2] - stroke / 2
+        side = transformed(pipe, 1.0, side_x - (pib[0] + pib[2]) / 2, ky, cb[1] - ky * pib[1])
+        tri = chev + side
+        tb = bounds(tri)
+        shapes[name] = (2, transformed(tri, 1.0, W2 / 2 - (tb[0] + tb[2]) / 2))
+
+    # ~>  <~  ~~>  : the font's own ~ as the shaft. Its ends are round caps, so a longer
+    # wave is made from its middle: the stretch from the crest down to the trough, and
+    # the same stretch turned upside down (trough up to crest), joined where the stroke
+    # runs flat. The shaft ends where the stroke rises through the middle height on the
+    # right, inside the arrow head.
+    tilde = record(glyph_set, gname["~"])
+    tib = bounds(tilde)
+    tcy = (tib[1] + tib[3]) / 2
+    txs = crossings(tilde, tcy)
+    rise_b = (txs[-2] + txs[-1]) / 2
+    swapped = [(op, tuple(None if pt is None else (pt[1], pt[0]) for pt in args)) for op, args in tilde]
+
+    def band(x):
+        ys = crossings(swapped, x)
+        return (ys[0], ys[-1]) if len(ys) >= 2 else None
+
+    samples = [(x, band(x)) for x in range(int(tib[0]) + 1, int(tib[2]))]
+    samples = [(x, b) for x, b in samples if b]
+    crest_x, crest = max(samples, key=lambda s_: s_[1][1])
+    trough_x, trough = min(samples, key=lambda s_: s_[1][0])
+    crest_y, trough_y = sum(crest) / 2, sum(trough) / 2
+    seam = 6
+
+    def strip(ops, x0, x1):
+        return clip_polygon(ops, [(x0, -5000), (x0, 5000), (x1, 5000), (x1, -5000)])
+
+    down = strip(tilde, crest_x - seam, trough_x + seam)          # crest to trough
+    # trough to crest: flipping turns the outline the other way round, so turn it back
+    up = clip_polygon(transformed(down, 1.0, 0.0, -1.0, crest_y + trough_y), [(-5000, -5000), (-5000, 5000), (5000, 5000), (5000, -5000)])
+    half = trough_x - crest_x
+
+    def wave(extra):
+        """The ~ with `extra` whole waves set in its middle, and the x where it ends."""
+        out = strip(tilde, -5000, trough_x + seam)
+        x = trough_x
+        for _ in range(extra):
+            out += transformed(up, 1.0, x - crest_x)
+            out += transformed(down, 1.0, x + half - crest_x)
+            x += 2 * half
+        out += transformed(strip(tilde, trough_x - seam, rise_b + seam), 1.0, x - trough_x)
+        # one outline, so thinning it later cannot open the joins
+        return strip(out, -5000, 5000), rise_b + (x - trough_x)
+
+    def stretch(ops, cut_x, target_x):
+        kx = (target_x - tib[0]) / (cut_x - tib[0])
+        out = transformed(ops, kx, tib[0] * (1 - kx), 1.0, axis - tcy)
+        if relation is not None and abs(kx - 1) > 0.01:
+            # widening slants the rising strokes flatter and thicker: take that back
+            dx = stroke * (1 - kx) * 0.5
+            out = transformed(relation[1](out, dx, 0), 1.0, -dx / 2)
+        return out
+
+    w, cut = wave(0)
+    shaft = stretch(w, cut, end)
+    shapes["tilde_greater"] = (2, g_right + shaft)
+    # <~ is ~> turned half round, on the font's own <
+    shapes["less_tilde"] = (2, less + transformed(shaft, -1.0, W2, -1.0, 2 * axis))
+    w, cut = wave(1)
+    shapes["tilde_tilde_greater"] = (3, g3 + stretch(w, cut, end3))
+
+    # /\  \/  : the slashes leaning together until their ends meet
+    sl, bsl = record(glyph_set, gname["/"]), record(glyph_set, gname["\\"])
+    sb, bb = bounds(sl), bounds(bsl)
+    touch = stroke * 0.7
+    shapes["slash_backslash"] = (2, transformed(sl, 1.0, W2 / 2 + touch / 2 - sb[2])
+                                 + transformed(bsl, 1.0, W2 / 2 - touch / 2 - bb[0]))
+    shapes["backslash_slash"] = (2, transformed(bsl, 1.0, W2 / 2 + touch / 2 - bb[2])
+                                 + transformed(sl, 1.0, W2 / 2 - touch / 2 - sb[0]))
+
     glyf = font["glyf"]
     hmtx = font["hmtx"]
     order = font.getGlyphOrder()
@@ -637,6 +766,10 @@ def slash_of(font, glyph_set):
 def install_calt(font, gname, built, extra_fea=""):
     ops_class = " ".join(gname[c] for c in OPERATOR_CHARS)
     lines = [f"@OPS = [{ops_class}];"]
+    cmap = font.getBestCmap()
+    word = sorted({cmap[ord(c)] for c in
+                   "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" if ord(c) in cmap})
+    lines.append(f"@WORD = [{' '.join(word)}];")
     ligatures = [(n, c) for n, c in LIGATURES if n in built]
     for name, chars in ligatures:
         g = [gname[c] for c in chars]
@@ -645,6 +778,9 @@ def install_calt(font, gname, built, extra_fea=""):
         lines.append(f"lookup {name} {{")
         lines.append(f"    ignore sub @OPS {g[0]}' {seq};")
         lines.append(f"    ignore sub {g[0]}' {seq} @OPS;")
+        if name in WORD_GUARDED:
+            lines.append(f"    ignore sub @WORD {g[0]}' {seq};")
+            lines.append(f"    ignore sub {g[0]}' {seq} @WORD;")
         # Rules for later positions come first: they see the spacers already placed.
         for i in range(len(chars) - 1, 0, -1):
             before = " ".join(sp[:i])
