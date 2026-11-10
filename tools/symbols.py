@@ -763,9 +763,14 @@ def korean_extras(font, gs, cmap, weight, made):
                 made[cp] = ops
 
 
-def kana_extras(gs, cmap, made):
+KANA_SCALE = 0.92
+
+
+def kana_extras(gs, cmap, made, weight):
     """ー from the lower stroke of ニ, ゛ and ゜ from the marks of ガ and パ.
-    The marks stand at the top left of their two cells, next to the kana before them."""
+    The marks stand at the top left of their two cells, next to the kana before them.
+    Then every kana is drawn at 92%: at full size the kana look larger than the Hangul
+    beside them, which leaves more room between its strokes."""
     def contours(ch):
         return M.polygon_points_ops(M.record(gs, cmap[ord(ch)]))
 
@@ -796,6 +801,20 @@ def kana_extras(gs, cmap, made):
         ops = flat(cs)
         b = M.bounds(ops)
         made[cp] = M.transformed(ops, 1.0, 120 - b[0])
+
+    if ord("カ") not in cmap:
+        return
+    kb = box("カ")
+    cx, cy, k = M.CELL, (kb[1] + kb[3]) / 2, KANA_SCALE
+    # the stroke shrinks with the glyph: bring it back to the weight of the Hangul
+    grow = 80 * (1 - k)
+    kana = list(range(0x3041, 0x3097)) + list(range(0x30A1, 0x30FB)) + [0x309B, 0x309C, 0x30FC]
+    for cp in kana:
+        ops = made.get(cp) or (M.record(gs, cmap[cp]) if cp in cmap else None)
+        if not ops:
+            continue
+        small = M.transformed(ops, k, cx * (1 - k), k, cy * (1 - k))
+        made[cp] = M.transformed(weight(small, grow, grow), 1.0, -grow / 2, 1.0, -grow / 2)
 
 
 # ---------------------------------------------------------------- driver
@@ -838,7 +857,7 @@ def add_symbols(font, to_glyph, weight):
                 made[cp] = ops
     latin_ext_a(font, gs, cmap, cell, weight, made)
     korean_extras(font, gs, cmap, weight, made)
-    kana_extras(gs, cmap, made)
+    kana_extras(gs, cmap, made, weight)
     if 0x3C2 not in cmap and ord("c") in cmap:              # ς final sigma: c with a tail
         cb = M.bounds(M.record(gs, cmap[ord("c")]))
         made[0x3C2] = M.record(gs, cmap[ord("c")]) + round_line(
