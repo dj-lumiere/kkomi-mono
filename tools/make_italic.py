@@ -5,7 +5,7 @@ An italic is more than slanted letters: handwriting run fast ends its strokes in
 So the Latin letters first take italic forms built from the font's own strokes:
 - a d h m n u end their right stem in the hook of t (i and l already do, in the Regular);
 - f runs its stem below the baseline and ends it in the hook of j;
-- x becomes two arcs back to back, )( , made from the font's own parentheses.
+- x becomes two curves back to back, ɔc, made from the font's own c and its mirror image.
 Then every one-cell glyph leans by ANGLE degrees.
 
 Left upright: Hangul and other two-cell glyphs (slanted Hangul looks wrong), the
@@ -132,26 +132,26 @@ def f_descender(f_ops, j_ops):
     return path_op(path_op(cut, tail, pathops.PathOp.UNION), join, pathops.PathOp.UNION)
 
 
-def arcs_x(x_ops, close_ops, open_ops):
-    """x as )( : the parentheses brought down to the x-height, meeting in the middle."""
+def c_x(x_ops, c_ops):
+    """x as ɔc: the c and its mirror image back to back at the x-height, their backs
+    overlapping by about a stroke so they read as one letter."""
+    import pathops
     from make_mono_static import embolden
-    xb = M.bounds(x_ops)
-    h = xb[3] - xb[1]
+    from symbols import flip_h
+    xb, cb = M.bounds(x_ops), M.bounds(c_ops)
+    overlap = 60
+    half = ((xb[2] - xb[0]) + overlap) / 2
+    kx = half / (cb[2] - cb[0])
+    ky = (xb[3] - xb[1]) / (cb[3] - cb[1])
     cx = (xb[0] + xb[2]) / 2
-    out = []
-    for ops, side in ((close_ops, -1), (open_ops, 1)):
-        b = M.bounds(ops)
-        ky = h / (b[3] - b[1])
-        kx = ky * 2.0                       # wider than tall, so the arcs bow out
-        # the inner side of each arc touches the centre line, a little overlapped
-        inner = b[2] if side < 0 else b[0]
-        dx = cx - kx * inner + side * -12
-        piece = M.transformed(ops, kx, dx, ky, xb[1] - ky * b[1])
-        # the arcs run mostly up and down, so pressing them down leaves their stroke
-        # as it was: only the widening changes it, and that is taken back across
-        # the font's parentheses are drawn heavier than its letters: thin them a little more
-        out += embolden(piece, 68 * (1 - kx) - 12, -4)
-    return out
+    c = M.transformed(c_ops, kx, 0.0, ky, xb[1] - ky * cb[1])
+    # narrowing thins the curve's upright parts: give that width back
+    c = embolden(c, 68 * (1 - kx), 68 * (1 - ky))
+    b = M.bounds(c)
+    right = M.transformed(c, 1.0, cx - overlap / 2 - b[0])
+    rb = M.bounds(right)
+    left = flip_h(right, (2 * cx - rb[2], 0, rb[2], 0))
+    return path_op(right, left, pathops.PathOp.UNION)
 
 
 def skew(ops, angle, y0):
@@ -179,8 +179,7 @@ def main():
     for ch in HOOKED:
         changed[cmap[ord(ch)]] = right_stem_hook(M.record(gs, cmap[ord(ch)]), hook, x_height)
     changed[cmap[ord("f")]] = f_descender(M.record(gs, cmap[ord("f")]), M.record(gs, cmap[ord("j")]))
-    changed[cmap[ord("x")]] = arcs_x(M.record(gs, cmap[ord("x")]), M.record(gs, cmap[ord(")")]),
-                                     M.record(gs, cmap[ord("(")]))
+    changed[cmap[ord("x")]] = c_x(M.record(gs, cmap[ord("x")]), M.record(gs, cmap[ord("c")]))
 
     upright = set()
     for cp, name in cmap.items():
