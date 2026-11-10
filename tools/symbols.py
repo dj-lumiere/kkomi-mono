@@ -746,7 +746,7 @@ def rotated(ops, quarter_turns, cx, cy):
 
 
 def arrows(gs, cmap, weight, made):
-    """← ↑ → ↓ ↔ ↕ drawn like the -> ligature: the font's own > as the head, the
+    """← ↑ → ↓ ↔ ↕ ↖ ↗ ↘ ↙ drawn like the -> ligature: the font's own > as the head, the
     hyphen lengthened as the shaft. The head is made smaller to fit one cell, and its
     stroke is brought back to the hyphen's weight."""
     if not all(ord(ch) in cmap for ch in "->"):
@@ -799,6 +799,27 @@ def arrows(gs, cmap, weight, made):
         ops = M.transformed(right(length, both), 1.0, -length / 2)       # centred on (0, 0)
         ops = rotated(ops, turns, 0.0, 0.0)
         made[cp] = M.transformed(ops, 1.0, cx, 1.0, vy if turns % 2 else axis)
+
+    # ↖ ↗ ↘ ↙: the same arrow turned by 45°, as long as fits the cell's width
+    def turned(ops, degrees):
+        a = math.radians(degrees)
+        c, s = math.cos(a), math.sin(a)
+        return [(op, tuple(None if pt is None else (pt[0] * c - pt[1] * s, pt[0] * s + pt[1] * c)
+                           for pt in args)) for op, args in ops]
+
+    # ↗ is drawn, the other three are its mirror images, so all four are the same size
+    length = h_len * 1.3
+    for _ in range(3):
+        b = M.bounds(turned(M.transformed(right(length), 1.0, -length / 2), 45))
+        length *= h_len / (b[2] - b[0])
+    ne = turned(M.transformed(right(length), 1.0, -length / 2), 45)
+    b = M.bounds(ne)
+    ne = M.transformed(ne, 1.0, cx - (b[0] + b[2]) / 2, 1.0, vy - (b[1] + b[3]) / 2)
+    b = M.bounds(ne)
+    made[0x2197] = ne                                             # ↗
+    made[0x2196] = flip_h(ne, b)                                  # ↖
+    made[0x2198] = flip_v(ne, b)                                  # ↘
+    made[0x2199] = flip_h(flip_v(ne, b), b)                       # ↙
 
 
 def fractions(gs, cmap, weight, made):
