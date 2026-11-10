@@ -433,6 +433,7 @@ def main():
             upright.add(name)
     y0 = x_height / 2
     joining = {cmap[cp] for cp in (0x5F, 0x203E, 0x2017) if cp in cmap}
+    mapped = set(cmap.values())
     for name in font.getGlyphOrder():
         adv = hmtx[name][0]
         if name in upright or adv > M.CELL:
@@ -440,8 +441,12 @@ def main():
         ops = changed.get(name) or M.record(gs, name)
         if M.bounds(ops) is None:
             continue
-        # lines that run on into the next cell (_ ‾ ‗) keep their full width
-        fitted = ops if name in joining else fit_cell(ops, y0)
+        # Only a letter or sign of its own, one cell wide, is kept inside its cell. A
+        # ligature reaches back over the cells before it, a combining mark sits over the
+        # letter before it, and lines that run on into the next cell (_ ‾ ‗) join up:
+        # all of those are drawn past their cell on purpose.
+        own_cell = name in mapped and adv == M.CELL and name not in joining
+        fitted = fit_cell(ops, y0) if own_cell else ops
         glyf[name] = to_tt_glyph_quadratic(skew(fitted, ANGLE, y0))
         changed[name] = True
     names = [n for n in changed]
