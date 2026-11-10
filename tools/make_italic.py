@@ -28,7 +28,10 @@ import make_mono as M  # noqa: E402
 from make_mono_static import to_tt_glyph_quadratic  # noqa: E402
 
 ANGLE = 13
-UPRIGHT_RANGES = [(0x1100, 0x11FF), (0x2500, 0x259F), (0x2800, 0x28FF), (0xE0A0, 0xE0B3)]
+# Hangul, kana and the full-width forms slant with the Latin letters. Only the glyphs
+# that must join up with their neighbours (box drawing, blocks, braille, Powerline)
+# stay upright.
+UPRIGHT_RANGES = M.KEEP_RANGES
 HOOKED = "adhmnu"
 
 
@@ -327,19 +330,21 @@ def narrowed(ops, k, cx=None):
     return embolden(M.transformed(ops, k, cx * (1 - k)), 68 * (1 - k) * 0.8, 0.0)
 
 
-def fit_scale(ops, y0):
+def fit_scale(ops, y0, width=None):
     """How much ops must be narrowed to stay INSET inside the cell once slanted."""
+    width = width or M.CELL
     sb = M.bounds(M.flattened(skew(ops, ANGLE, y0)))
-    return min(1.0, (M.CELL - 2 * INSET) / (sb[2] - sb[0]))
+    return min(1.0, (width - 2 * INSET) / (sb[2] - sb[0]))
 
 
-def fit_cell(ops, y0):
+def fit_cell(ops, y0, width=None):
     """ops narrowed (about their middle) and moved, if need be, so that once slanted
-    they stay INSET inside the cell; the stroke the narrowing takes is given back."""
-    from make_mono_static import embolden
+    they stay INSET inside their cells (`width` wide, one cell by default); the stroke
+    the narrowing takes is given back."""
+    width = width or M.CELL
     for _ in range(3):
         sb = M.bounds(M.flattened(skew(ops, ANGLE, y0)))
-        lo, hi = INSET, M.CELL - INSET
+        lo, hi = INSET, width - INSET
         if sb[0] >= lo - 0.5 and sb[2] <= hi + 0.5:
             return ops
         ops = narrowed(ops, min(1.0, (hi - lo) / (sb[2] - sb[0])))
@@ -432,11 +437,17 @@ def main():
         if any(a <= cp <= b for a, b in UPRIGHT_RANGES):
             upright.add(name)
     y0 = x_height / 2
+    # Hangul and the other two-cell glyphs slant about the middle of the syllables, so
+    # they stay centred in their two cells. The conjoining jamo drawn over the cells
+    # before them slant the same way, to line up with their initial.
+    ga = M.bounds(M.record(gs, cmap[0xAC00]))
+    wide_y0 = (ga[1] + ga[3]) / 2
+    jamo = {name for cp, name in cmap.items() if 0x1100 <= cp <= 0x11FF}
     joining = {cmap[cp] for cp in (0x5F, 0x203E, 0x2017) if cp in cmap}
     mapped = set(cmap.values())
     for name in font.getGlyphOrder():
         adv = hmtx[name][0]
-        if name in upright or adv > M.CELL:
+        if name in upright or adv > 2 * M.CELL:
             continue
         ops = changed.get(name) or M.record(gs, name)
         if M.bounds(ops) is None:
@@ -449,8 +460,14 @@ def main():
         base, _, suffix = name.partition(".")
         letter = name in mapped or (suffix in ("ss02", "ss03") and base in mapped)
         own_cell = letter and adv == M.CELL and name not in joining
-        fitted = fit_cell(ops, y0) if own_cell else ops
-        glyf[name] = to_tt_glyph_quadratic(skew(fitted, ANGLE, y0))
+        if adv == 2 * M.CELL:
+            # a two-cell glyph is always one of its own, kept inside its two cells
+            fitted = fit_cell(ops, wide_y0, 2 * M.CELL)
+            glyf[name] = to_tt_glyph_quadratic(skew(fitted, ANGLE, wide_y0))
+        else:
+            gy = wide_y0 if name in jamo else y0
+            fitted = fit_cell(ops, gy) if own_cell else ops
+            glyf[name] = to_tt_glyph_quadratic(skew(fitted, ANGLE, gy))
         changed[name] = True
     names = [n for n in changed]
     removeOverlaps(font, glyphNames=names, removeHinting=True, ignoreErrors=True)

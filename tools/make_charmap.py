@@ -49,8 +49,11 @@ BLOCKS = [
     (0xFFF0, 0xFFFF, "특수 문자", "Specials"),
 ]
 
-LIGATURES = ["->", "<-", "<->", "=>", "<=>", "-->", "<--", "==>", "<==", "~>", "<~", "~~>",
-             "==", "===", "!=", "!==", "<=", ">=", ">>=", "=<<", "<>", "|>", "<|", "/\\", "\\/"]
+# The ligatures the font forms by default, read from the build so the list cannot
+# drift from the font (the opt-in ones of a stylistic set are left out).
+sys.path.insert(0, __import__("os").path.dirname(__import__("os").path.abspath(__file__)))
+import make_mono as M  # noqa: E402
+LIGATURES = [chars for name, chars in M.LIGATURES if name not in M.STYLISTIC]
 
 POWERLINE = {0xE0A0: "Powerline branch", 0xE0A1: "Powerline line number", 0xE0A2: "Powerline lock",
              0xE0B0: "Powerline right arrow", 0xE0B1: "Powerline right thin arrow",
