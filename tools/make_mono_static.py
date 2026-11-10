@@ -17,6 +17,7 @@ Usage: make_mono_static.py <font.otf|ttf> <output.ttf> <old family> <new family>
 """
 import math
 import sys
+import unicodedata
 
 from fontTools.pens.cu2quPen import Cu2QuPen
 from fontTools.pens.ttGlyphPen import TTGlyphPen
@@ -417,7 +418,27 @@ def main():
     lb = M.bounds(M.record(glyph_set, font.getBestCmap()[ord("l")]))
     stem = lb[2] - lb[0]
 
-    order = font.getGlyphOrder()
+    order = list(font.getGlyphOrder())
+    # A glyph the font shares between a narrow character and its wide form (· and ・,
+    # ¥ and ￥) would be two cells for both: the narrow one gets its own copy, in one cell.
+    alias = {}
+    sharing = {}
+    for cp, name in font.getBestCmap().items():
+        sharing.setdefault(name, []).append(cp)
+    for name, cps in sharing.items():
+        wide = [unicodedata.east_asian_width(chr(cp)) in "WF" for cp in cps]
+        if not (any(wide) and not all(wide)):
+            continue
+        for cp, w in zip(cps, wide):
+            if w:
+                continue
+            new = f"uni{cp:04X}"
+            alias[new], kinds[new], hmtx[new] = name, "narrow", hmtx[name]
+            order.append(new)
+            for table in font["cmap"].tables:
+                if table.isUnicode() and cp in table.cmap:
+                    table.cmap[cp] = new
+    font.setGlyphOrder(order)
     cmap = font.getBestCmap()
     zero, period = cmap.get(ord("0")), cmap.get(ord("."))
     glyph_i, glyph_l = cmap.get(ord("i")), cmap.get(ord("l"))
@@ -436,7 +457,7 @@ def main():
     hb = M.bounds(M.record(glyph_set, cmap[ord("-")]))
     operator_axis = (hb[1] + hb[3]) / 2
     for name in order:
-        ops = filled.get(name) or M.record(glyph_set, name)
+        ops = filled.get(name) or M.record(glyph_set, alias.get(name, name))
         if name == backslash and slash:
             # the font draws the won sign here: a backslash, the slash flipped
             ops = mirrored(M.record(glyph_set, slash))

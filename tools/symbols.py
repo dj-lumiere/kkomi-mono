@@ -763,6 +763,119 @@ def korean_extras(font, gs, cmap, weight, made):
                 made[cp] = ops
 
 
+def rotated(ops, quarter_turns, cx, cy):
+    """Turned by 90° steps about (cx, cy). A turn keeps the contour direction."""
+    out = ops
+    for _ in range(quarter_turns % 4):
+        out = [(op, tuple(None if pt is None else (cx - (pt[1] - cy), cy + (pt[0] - cx)) for pt in args))
+               for op, args in out]
+    return out
+
+
+def arrows(gs, cmap, weight, made):
+    """← ↑ → ↓ ↔ ↕ drawn like the -> ligature: the font's own > as the head, the
+    hyphen lengthened as the shaft. The head is made smaller to fit one cell, and its
+    stroke is brought back to the hyphen's weight."""
+    if not all(ord(ch) in cmap for ch in "->"):
+        return
+    hy_ops = M.record(gs, cmap[ord("-")])
+    hy = M.bounds(hy_ops)
+    axis, stroke = (hy[1] + hy[3]) / 2, hy[3] - hy[1]
+    gt = M.record(gs, cmap[ord(">")])
+
+    def make_head(kx, ky):
+        """The > scaled by kx, ky with its stroke given back, tip at (0, 0)."""
+        h = M.transformed(gt, kx, 0.0, ky, 0.0)
+        h = weight(h, stroke * (1 - kx), stroke * (1 - ky))
+        b = M.bounds(h)
+        return M.transformed(h, 1.0, -b[2], 1.0, -(b[1] + b[3]) / 2)
+
+    single, double = make_head(0.5, 0.52), make_head(0.36, 0.46)
+
+    def bar(x0, x1):
+        """The hyphen lengthened in the middle, its ends keeping their shape, on y = 0."""
+        mid = (hy[0] + hy[2]) / 2
+        return [(op, tuple(None if pt is None else
+                           (pt[0] + (x0 - hy[0] if pt[0] < mid else x1 - hy[2]), pt[1] - axis)
+                           for pt in args)) for op, args in hy_ops]
+
+    def shaft_end(head):
+        xs = M.crossings(head, 0.0)
+        return (xs[-1] + xs[-2]) / 2 if len(xs) >= 2 else M.bounds(head)[0] + stroke
+
+    def right(length, both=False):
+        """An arrow pointing right from x = 0 to x = length on y = 0."""
+        head = M.transformed(double if both else single, 1.0, length)
+        end = shaft_end(head)
+        if not both:
+            return head + bar(0.0, end)
+        tail = flip_h(head, (0.0, 0, length, 0))
+        start = length - end
+        return head + tail + bar(start, end)
+
+    margin = 30
+    h_len = M.CELL - 2 * margin
+    # the upright ones run as tall as the capitals, centred on them
+    cap = M.bounds(M.record(gs, cmap[ord("H")])) if ord("H") in cmap else (0, 0, 0, 700)
+    v_len = cap[3] - cap[1]
+    vy = (cap[1] + cap[3]) / 2
+    cx = M.CELL / 2
+    for cp, length, both, turns in ((0x2192, h_len, False, 0), (0x2190, h_len, False, 2),
+                                    (0x2194, h_len, True, 0), (0x2191, v_len, False, 1),
+                                    (0x2193, v_len, False, 3), (0x2195, v_len, True, 1)):
+        ops = M.transformed(right(length, both), 1.0, -length / 2)       # centred on (0, 0)
+        ops = rotated(ops, turns, 0.0, 0.0)
+        made[cp] = M.transformed(ops, 1.0, cx, 1.0, vy if turns % 2 else axis)
+
+
+def fractions(gs, cmap, weight, made):
+    """¼ ½ ¾ ⅓ ... set as a stacked fraction in one cell: the numerator over a bar on the
+    hyphen's height, the denominator under it."""
+    if ord("-") not in cmap:
+        return
+    hy_ops = M.record(gs, cmap[ord("-")])
+    hy = M.bounds(hy_ops)
+    axis, stroke = (hy[1] + hy[3]) / 2, hy[3] - hy[1]
+    rule = stroke * 0.8
+    gap = stroke * 0.7
+    digit_h = M.bounds(M.record(gs, cmap[ord("0")]))
+    k = 330 / (digit_h[3] - digit_h[1])
+    margin = 40
+
+    def number(text, cy):
+        glyphs = [M.record(gs, cmap[ord(ch)]) for ch in text]
+        bs = [M.bounds(g) for g in glyphs]
+        widths = [k * (b[2] - b[0]) for b in bs]
+        between = 14
+        total = sum(widths) + between * (len(glyphs) - 1)
+        kx = min(1.0, (M.CELL - 2 * margin) / total)
+        left = M.CELL / 2 - kx * total / 2
+        out = []
+        for g, b, w in zip(glyphs, bs, widths):
+            one = M.transformed(g, k * kx, left - k * kx * b[0], k, cy - k * (digit_h[1] + digit_h[3]) / 2)
+            # small digits keep half the weight they lose, so they stay light but readable
+            out += weight(one, 68 * (1 - k * kx) * 0.5, 68 * (1 - k) * 0.5)
+            left += kx * (w + between)
+        return out
+
+    half = 330 / 2
+    top_cy = axis + rule / 2 + gap + half
+    bottom_cy = axis - rule / 2 - gap - half
+    bar = M.rect(margin, axis - rule / 2, M.CELL - margin, axis + rule / 2)
+    for cp in list(range(0xBC, 0xBF)) + list(range(0x2150, 0x215F)) + [0x2189]:
+        parts = unicodedata.decomposition(chr(cp)).split()
+        if not parts or parts[0] != "<fraction>":
+            continue
+        chars = [chr(int(p, 16)) for p in parts[1:]]
+        if "⁄" not in chars:
+            continue
+        cut = chars.index("⁄")
+        num, den = "".join(chars[:cut]), "".join(chars[cut + 1:])
+        if not all(ord(ch) in cmap for ch in num + den):
+            continue
+        made[cp] = number(num, top_cy) + bar + number(den, bottom_cy)
+
+
 KANA_SCALE = 0.92
 
 
@@ -857,6 +970,8 @@ def add_symbols(font, to_glyph, weight):
                 made[cp] = ops
     latin_ext_a(font, gs, cmap, cell, weight, made)
     korean_extras(font, gs, cmap, weight, made)
+    arrows(gs, cmap, weight, made)
+    fractions(gs, cmap, weight, made)
     kana_extras(gs, cmap, made, weight)
     if 0x3C2 not in cmap and ord("c") in cmap:              # ς final sigma: c with a tail
         cb = M.bounds(M.record(gs, cmap[ord("c")]))

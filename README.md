@@ -4,7 +4,7 @@
 
 - 라틴 문자와 기호는 한 칸(500), 한글은 두 칸(1000)입니다 (UPM 1000).
 - Regular, Italic, Bold, Bold Italic 네 벌이 있습니다.
-- [웹에서 미리보기](https://dj-lumiere.github.io/kkomi-mono/) · [내려받기](https://github.com/dj-lumiere/kkomi-mono/releases/latest)
+- [웹에서 미리보기](https://dj-lumiere.github.io/kkomi-mono/) · [글자 목록](https://dj-lumiere.github.io/kkomi-mono/chars.html) · [내려받기](https://github.com/dj-lumiere/kkomi-mono/releases/latest)
 
 ![코드 예시: 리거처, 한글 주석, 이탤릭 키워드](images/code.png)
 
@@ -71,6 +71,9 @@ code, pre { font-family: "KNPS Kkomi Mono", monospace; }
 
 **추가한 글자**
 - 라틴 확장-A, 악센트 글자, 강세 부호가 붙은 그리스 문자
+- 화살표 `← ↑ → ↓ ↔ ↕`는 `->` 리거처처럼 원본 `>`와 `-`로 다시 그렸습니다.
+- 분수 `¼ ½ ¾ ⅓ ⅛` 등은 분자, 가로줄, 분모를 위아래로 쌓아 한 칸에 넣었습니다.
+- `· ¢ £ ¥ ¬ ‾`는 원본에서 전각 글자와 모양을 함께 써서 두 칸이었습니다. 한 칸짜리를 따로 만들었습니다.
 - 위·아래 첨자, `⑯~⑳` `⒃~⒇` `㈝ ㈞`, 제어 문자 그림 기호(`␀ ␛ ␡` 등)
 - 터미널 기호: 박스 선, 블록, 점자, Powerline. 칸에 맞춰 그려서 위아래·좌우가 이어집니다.
 - 일본어 장음 기호 `ー`와 탁점·반탁점 `゛` `゜`. 원본 `ニ` `ガ` `パ`의 획을 가져왔습니다.
