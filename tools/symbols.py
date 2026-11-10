@@ -763,6 +763,41 @@ def korean_extras(font, gs, cmap, weight, made):
                 made[cp] = ops
 
 
+def kana_extras(gs, cmap, made):
+    """ー from the lower stroke of ニ, ゛ and ゜ from the marks of ガ and パ.
+    The marks stand at the top left of their two cells, next to the kana before them."""
+    def contours(ch):
+        return M.polygon_points_ops(M.record(gs, cmap[ord(ch)]))
+
+    def flat(cs):
+        return [op for q in cs for op in q]
+
+    def box(ch):
+        return M.bounds(M.record(gs, cmap[ord(ch)]))
+
+    if 0x30FC not in cmap and ord("ニ") in cmap and ord("カ") in cmap:
+        lower = min(contours("ニ"), key=lambda q: M.bounds(q)[1])
+        b, kb = M.bounds(lower), box("カ")
+        # centred on the height of the katakana
+        made[0x30FC] = M.transformed(lower, 1.0, 0.0, 1.0, (kb[1] + kb[3]) / 2 - (b[1] + b[3]) / 2)
+
+    def mark(ch, plain):
+        """The small contours ch has in the upper right, where plain has nothing."""
+        pb = box(plain)
+        return [q for q in contours(ch) if M.bounds(q)[1] > (pb[1] + pb[3]) / 2
+                and M.bounds(q)[0] > (pb[0] + pb[2]) / 2 and M.bounds(q)[2] - M.bounds(q)[0] < 250]
+
+    for cp, ch, plain in ((0x309B, "ガ", "ハ"), (0x309C, "パ", "ハ")):
+        if cp in cmap or ord(ch) not in cmap:
+            continue
+        cs = mark(ch, plain)
+        if not cs:
+            continue
+        ops = flat(cs)
+        b = M.bounds(ops)
+        made[cp] = M.transformed(ops, 1.0, 120 - b[0])
+
+
 # ---------------------------------------------------------------- driver
 
 FROM_FONT = [0x2022, 0x2713, 0x2714, 0x2717, 0x2718, 0x2039, 0x203A, 0x201E, 0x201A, 0x203C,
@@ -803,6 +838,7 @@ def add_symbols(font, to_glyph, weight):
                 made[cp] = ops
     latin_ext_a(font, gs, cmap, cell, weight, made)
     korean_extras(font, gs, cmap, weight, made)
+    kana_extras(gs, cmap, made)
     if 0x3C2 not in cmap and ord("c") in cmap:              # ς final sigma: c with a tail
         cb = M.bounds(M.record(gs, cmap[ord("c")]))
         made[0x3C2] = M.record(gs, cmap[ord("c")]) + round_line(
