@@ -851,12 +851,21 @@ def finish_tables(font):
             del font[tag]
 
 
+VERSION = "1.100"   # this font's own version, written over the original's
+
+
 def rename(font):
+    font["head"].fontRevision = float(VERSION)
     for rec in font["name"].names:
+        if rec.nameID == 5:
+            rec.string = f"Version {VERSION}"
+            continue
         if rec.nameID not in (1, 3, 4, 6, 16, 17, 18, 21, 22, 25):
             continue
         text = rec.toUnicode()
         text = text.replace(OLD_FAMILY, NEW_FAMILY).replace(OLD_PS, NEW_PS)
+        if rec.nameID == 3 and ";" in text:
+            text = VERSION + text[text.index(";"):]
         rec.string = text
 
 
