@@ -431,6 +431,38 @@ def to_tt_glyph(ops):
     return glyph
 
 
+def stretch_tall(font, k):
+    """Every glyph made k times taller, standing on the baseline, and its flat strokes
+    thinned back to their width: stretching thickens them by k, the upright strokes
+    keep theirs. The lines grow with the glyphs, so box drawing still joins up."""
+    gs = font.getGlyphSet()
+    cmap = font.getBestCmap()
+    glyf, hmtx = font["glyf"], font["hmtx"]
+    hy = M.bounds(M.record(gs, cmap[ord("-")]))
+    thin = (hy[3] - hy[1]) * (k - 1)
+    keep = {n for cp, n in cmap.items() if any(a <= cp <= b for a, b in M.KEEP_RANGES)}
+    drawn = {}
+    for name in font.getGlyphOrder():
+        ops = M.record(gs, name)
+        if not M.bounds(ops):
+            continue
+        ops = M.transformed(ops, 1.0, 0.0, k, 0.0)
+        drawn[name] = ops if name in keep else embolden(ops, 0.0, -thin)
+    for name, ops in drawn.items():
+        glyf[name] = to_tt_glyph_quadratic(ops)
+    for name in font.getGlyphOrder():
+        g = glyf[name]
+        g.recalcBounds(glyf)
+        hmtx[name] = (hmtx[name][0], getattr(g, "xMin", 0) if g.numberOfContours else 0)
+    hhea, os2, post = font["hhea"], font["OS/2"], font["post"]
+    hhea.ascent, hhea.descent = round(hhea.ascent * k), round(hhea.descent * k)
+    os2.sTypoAscender, os2.sTypoDescender = hhea.ascent, hhea.descent
+    os2.usWinAscent, os2.usWinDescent = hhea.ascent, -hhea.descent
+    for field in ("sxHeight", "sCapHeight", "yStrikeoutPosition", "yStrikeoutSize"):
+        setattr(os2, field, round(getattr(os2, field) * k))
+    post.underlinePosition = round(post.underlinePosition * k)
+
+
 def main():
     src, out_path, old_family, new_family = sys.argv[1:5]
     font = TTFont(src)
@@ -626,6 +658,7 @@ def main():
             text = rec.toUnicode()
             if not text.endswith(suffix):
                 rec.string = text + suffix
+    stretch_tall(font, M.TALL)
     font.save(out_path)
     print("wrote", out_path)
 

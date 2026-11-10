@@ -39,7 +39,7 @@ WEIGHTS = {
     "Bold": (43, 32, 700),
     "Bold Italic": (43, 32, 700),
 }
-KEEP_RANGES = [(0x2500, 0x259F), (0x2800, 0x28FF), (0xE0A0, 0xE0B3)]
+KEEP_RANGES = M.KEEP_RANGES
 
 
 def main():

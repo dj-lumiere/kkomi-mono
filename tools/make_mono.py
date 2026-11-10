@@ -98,6 +98,13 @@ FEATURE_NAMES = {
     "ss03": "Italic letters without cursive forms",
     "ss04": "Visible Hangul fillers",
 }
+# Glyphs that must meet the cell edges (box drawing and blocks, braille, Powerline):
+# no stroke is thickened or thinned in them, or they would no longer join up.
+KEEP_RANGES = [(0x2500, 0x259F), (0x2800, 0x28FF), (0xE0A0, 0xE0B3)]
+# Every glyph is drawn this much taller than the original, and the lines with it. The
+# cells keep their width (a Hangul syllable stays exactly 1 em), so the letters gain
+# height only: at the same font size they stand as tall as in other coding fonts.
+TALL = 1.15
 # Alternate glyphs turned on by a feature: tag -> [(glyph, alternate)]. The build adds
 # to it before the features are written.
 ALTERNATES = {}
@@ -1017,7 +1024,7 @@ def finish_tables(font):
             del font[tag]
 
 
-VERSION = "1.500"   # this font's own version, written over the original's
+VERSION = "1.600"   # this font's own version, written over the original's
 
 
 def rename(font):

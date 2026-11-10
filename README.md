@@ -3,6 +3,7 @@
 국립공원공단의 **국립공원 꼬미체**(KNPS Kkomi)를 에디터와 터미널에서 쓰도록 고정폭으로 바꾼 폰트입니다.
 
 - 라틴 문자와 기호는 한 칸(500), 한글은 두 칸(1000)입니다 (UPM 1000).
+- 글자 높이를 원본의 1.15배로 늘려, 같은 글자 크기에서 다른 코딩 폰트만큼 커 보입니다.
 - Regular, Italic, Bold, Bold Italic 네 벌이 있습니다.
 - [웹에서 미리보기](https://dj-lumiere.github.io/kkomi-mono/) · [글자 목록](https://dj-lumiere.github.io/kkomi-mono/chars.html) · [내려받기](https://github.com/dj-lumiere/kkomi-mono/releases/latest)
 
@@ -46,6 +47,7 @@ code, pre { font-family: "KNPS Kkomi Mono", monospace; }
 ## 원본과 달라진 점
 
 **고정폭**
+- 모든 글자를 세로로 1.15배 늘리고, 그만큼 두꺼워진 가로획은 원래 굵기로 되돌렸습니다. 칸 너비는 그대로라 한글 한 글자는 정확히 1em이고, 줄 높이는 1.32em입니다.
 - 넓은 라틴 문자는 가로로 줄이고 세로획 굵기를 보정했습니다.
 - 한글은 두 칸을 채우도록 키우고 획 굵기를 다시 맞췄습니다. `고 두 드`처럼 좁은 글자는 가로로 최대 1.6배까지 늘립니다.
 - 가나는 두 칸에 두되 92%로 줄이고 획 굵기는 그대로 두었습니다. 원래 크기로는 한글 옆에서 더 크고 진해 보입니다.
