@@ -1396,6 +1396,138 @@ def kana_extras(gs, cmap, made, weight):
         made[cp] = M.transformed(weight(small, grow, grow), 1.0, -grow / 2, 1.0, -grow / 2)
 
 
+# ---------------------------------------------------------------- round kana
+
+KANA_RANGES = [(0x3041, 0x309F), (0x30A0, 0x30FF), (0x31F0, 0x31FF), (0xFF66, 0xFF9F)]
+# The kana come with square stroke ends and sharp turns, drawn like a gothic. Every sharp
+# corner of their outlines becomes a curve: an outer corner with KANA_ROUND_OUT, an inner
+# one with KANA_ROUND_IN. The outer radius is the inner one plus about a stroke, so the
+# stroke keeps its width through a turn. A stroke end, two outer corners close together,
+# turns into a full round end like the Hangul strokes.
+KANA_ROUND_IN = 50
+KANA_ROUND_OUT = 170
+KANA_THIN = 10          # the kana strokes are this much thicker than the Hangul ones
+KANA_SHARP = math.radians(35)
+
+
+def _polygons(ops):
+    out, cur = [], []
+    for op, args in M.flattened(ops, 10):
+        if op == "moveTo":
+            cur = [args[0]]
+        elif op == "lineTo":
+            if math.dist(cur[-1], args[0]) > 0.5:     # a repeated point would make an edge of no direction
+                cur.append(args[0])
+        elif op in ("closePath", "endPath"):
+            if cur and math.dist(cur[0], cur[-1]) <= 0.5:
+                cur = cur[:-1]
+            if len(cur) > 2:
+                out.append(cur)
+            cur = []
+    return out
+
+
+def _point_at(p, cum, s):
+    """The point at arc length s along the closed polyline p (cum: running lengths)."""
+    total = cum[-1]
+    s %= total
+    for i in range(len(p)):
+        if cum[i] <= s <= cum[i + 1]:
+            a, b = p[i], p[(i + 1) % len(p)]
+            t = (s - cum[i]) / max(cum[i + 1] - cum[i], 1e-9)
+            return (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t)
+    return p[-1]
+
+
+def _area(p):
+    return sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(p, p[1:] + p[:1])) / 2
+
+
+def round_corners(p, r_in, r_out, ccw):
+    """The closed polyline p with each sharp corner replaced by a curve: a quadratic from
+    a point `cut` before the corner to one `cut` after it, the corner its control point.
+    Neighbouring corners take at most half the way to each other. `ccw` is the direction
+    of the glyph's outer contours: a corner the outline turns that way round is an outer
+    corner of the ink, in a hole as well as on the outside."""
+    n = len(p)
+    cum = [0.0]
+    for a, b in zip(p, p[1:] + p[:1]):
+        cum.append(cum[-1] + math.dist(a, b))
+    total = cum[-1]
+    corners = []
+    for i in range(n):
+        a, b, c = p[i - 1], p[i], p[(i + 1) % n]
+        turn = (math.atan2(c[1] - b[1], c[0] - b[0]) - math.atan2(b[1] - a[1], b[0] - a[0]) + math.pi) \
+            % (2 * math.pi) - math.pi
+        if abs(turn) < KANA_SHARP:
+            continue
+        r = r_out if (turn > 0) == ccw else r_in
+        corners.append([i, r * math.tan(min(abs(turn), math.radians(120)) / 2)])
+    if not corners:
+        return p
+    for k, (i, cut) in enumerate(corners):
+        if len(corners) == 1:
+            back = fwd = total
+        else:
+            back = (cum[i] - cum[corners[k - 1][0]]) % total
+            fwd = (cum[corners[(k + 1) % len(corners)][0]] - cum[i]) % total
+        corners[k][1] = min(cut, back * 0.48, fwd * 0.48)
+    # Each corner's curve runs over the arc lengths [cum[i] - cut, cum[i] + cut]. The walk
+    # starts halfway between the last curve and the first one, so no curve wraps past it.
+    spans = [(cum[i] - cut, cum[i] + cut, i) for i, cut in corners]
+    start = (spans[-1][1] + spans[0][0] + total) / 2 if len(spans) > 1 else spans[0][1] + 1e-6
+    rel = lambda s: (s - start) % total
+    spans.sort(key=lambda sp: rel(sp[0]))
+    order = sorted(range(n), key=lambda j: rel(cum[j]))
+    out, k = [], 0
+    for j in order:
+        s = rel(cum[j])
+        while k < len(spans) and rel(spans[k][0]) <= s:
+            s0, s1, i = spans[k]
+            p0, p2, ctrl = _point_at(p, cum, s0), _point_at(p, cum, s1), p[i]
+            for m in range(9):
+                t_ = m / 8
+                out.append(((1 - t_) ** 2 * p0[0] + 2 * (1 - t_) * t_ * ctrl[0] + t_ * t_ * p2[0],
+                            (1 - t_) ** 2 * p0[1] + 2 * (1 - t_) * t_ * ctrl[1] + t_ * t_ * p2[1]))
+            k += 1
+        inside = any(rel(s0) <= s <= rel(s0) + (s1 - s0) for s0, s1, _ in spans)
+        if not inside:
+            out.append(p[j])
+    while k < len(spans):
+        s0, s1, i = spans[k]
+        p0, p2, ctrl = _point_at(p, cum, s0), _point_at(p, cum, s1), p[i]
+        out += [((1 - m / 8) ** 2 * p0[0] + 2 * (1 - m / 8) * (m / 8) * ctrl[0] + (m / 8) ** 2 * p2[0],
+                 (1 - m / 8) ** 2 * p0[1] + 2 * (1 - m / 8) * (m / 8) * ctrl[1] + (m / 8) ** 2 * p2[1]) for m in range(9)]
+        k += 1
+    return out
+
+
+def round_kana(font, to_glyph, weight):
+    """Every kana drawn with round turns and ends, at the weight of the Hangul strokes.
+    Returns the glyph names it rewrote."""
+    gs = font.getGlyphSet()
+    glyf = font["glyf"]
+    done = []
+    for cp, name in font.getBestCmap().items():
+        if not any(a <= cp <= b for a, b in KANA_RANGES) or name in done:
+            continue
+        ops = M.record(gs, name)
+        if not M.bounds(ops):
+            continue
+        ops = weight(ops, -KANA_THIN, -KANA_THIN)
+        polys = _polygons(ops)
+        ccw = _area(max(polys, key=lambda q: abs(_area(q)))) > 0
+        polys = [round_corners(q, KANA_ROUND_IN, KANA_ROUND_OUT, ccw) for q in polys]
+        drawn = []
+        for q in polys:
+            drawn.append(("moveTo", (q[0],)))
+            drawn += [("lineTo", (pt,)) for pt in q[1:]]
+            drawn.append(("closePath", ()))
+        glyf[name] = to_glyph(drawn)
+        done.append(name)
+    return done
+
+
 # ---------------------------------------------------------------- driver
 
 FROM_FONT = [0x2022, 0x2713, 0x2714, 0x2717, 0x2718, 0x2039, 0x203A, 0x201E, 0x201A, 0x203C,

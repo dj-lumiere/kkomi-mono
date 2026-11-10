@@ -659,6 +659,13 @@ def main():
             if not text.endswith(suffix):
                 rec.string = text + suffix
     stretch_tall(font, M.TALL)
+    # after the stretch, so the rounded turns come out as circles, not ellipses
+    rounded = symbols.round_kana(font, to_tt_glyph_quadratic, embolden)
+    print(f"round kana: {len(rounded)}")
+    for name in rounded:
+        g = font["glyf"][name]
+        g.recalcBounds(font["glyf"])
+        font["hmtx"][name] = (font["hmtx"][name][0], getattr(g, "xMin", 0) if g.numberOfContours else 0)
     font.save(out_path)
     print("wrote", out_path)
 
