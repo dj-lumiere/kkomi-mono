@@ -33,7 +33,7 @@ ALPHA = 0.5  # share of the lost vertical stroke width given back
 # Each syllable is widened toward HANGUL_WIDTH (at most HANGUL_MAX_X times), and all
 # of them are made HANGUL_Y times taller.
 HANGUL_WIDTH = 0.8   # share of the two-cell box
-HANGUL_MAX_X = 1.45
+HANGUL_MAX_X = 1.6
 HANGUL_Y = 1.04
 
 

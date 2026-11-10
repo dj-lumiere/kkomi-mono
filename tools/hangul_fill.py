@@ -355,4 +355,20 @@ def fill(glyph_set, cmap, weight):
             out[cmap[cp]] = flatten(built)
         else:
             stats["left to the fallback font"] += 1
+
+    # drawn syllables whose final runs much wider than the same final under the same
+    # vowel elsewhere: the final is taken from the syllable named beside it
+    for ch, donor in REDRAW_FINAL.items():
+        cp, dcp = ord(ch), ord(donor)
+        if cp not in drawn or dcp not in drawn or not split(cp)[1] or not split(dcp)[1]:
+            continue
+        upper, low = split(cp)
+        _, d_low = split(dcp)
+        lb, db = M.bounds(flatten(low)), M.bounds(flatten(d_low))
+        out[cmap[cp]] = flatten(attach(upper, (None, d_low), (db[0], lb[1], db[2], lb[3])))
+        stats["final redrawn"] += 1
     return out, stats
+
+
+# 법's ㅂ reaches under the whole vowel, half again as wide as in 업 멉 섭
+REDRAW_FINAL = {"법": "업"}
