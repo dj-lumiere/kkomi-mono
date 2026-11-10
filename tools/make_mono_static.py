@@ -114,6 +114,21 @@ def enlarge_hangul(ops, stem):
     return embolden(big, -stem * (sx - 1), -stem * (sy - 1))
 
 
+# Standalone jamo (ㄱ ㅏ ㄾ) keep their own proportions and where the font sets them
+# in the box: ㅏ has its stem near the middle, not its outline centred.
+JAMO_X = 1.2
+
+
+def place_jamo(ops, adv, box, stem):
+    b = M.bounds(ops)
+    if b is None:
+        return []
+    sx, sy = JAMO_X, HANGUL_Y
+    cx, cy = adv / 2, (b[1] + b[3]) / 2
+    big = M.transformed(ops, sx, box / 2 - sx * cx, sy, cy - sy * cy)
+    return embolden(big, -stem * (sx - 1), -stem * (sy - 1))
+
+
 def place(ops, adv, box, stem):
     b = M.bounds(ops)
     if b is None:
@@ -443,6 +458,7 @@ def main():
     zero, period = cmap.get(ord("0")), cmap.get(ord("."))
     glyph_i, glyph_l = cmap.get(ord("i")), cmap.get(ord("l"))
     hangul = {n for cp, n in cmap.items() if is_hangul(cp)}
+    compat_jamo = {n for cp, n in cmap.items() if 0x3131 <= cp <= 0x318E}
     l_pts = M.polygon_points(M.record(glyph_set, cmap[ord("l")]))[0]
     ccw = M.signed_area(l_pts) > 0
     t_bar = bar_thickness(M.record(glyph_set, cmap[ord("t")]))
@@ -467,6 +483,10 @@ def main():
             new_ops, new_adv = M.transformed(ops, M.MARK_SCALE, 0.0), 0
         else:
             box = M.WIDE if kind == "wide" else M.CELL
+            if name in compat_jamo:
+                glyphs[name] = to_tt_glyph(place_jamo(ops, adv, box, stem))
+                hmtx[name] = (box, 0)
+                continue
             if name in hangul:
                 ops = enlarge_hangul(ops, stem)
             if name in (glyph_i, glyph_l):

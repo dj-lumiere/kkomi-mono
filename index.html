@@ -16,20 +16,10 @@
 @font-face { font-family: "KKM"; src: url("fonts/woff2/KNPSKkomiMono-BoldItalic.woff2") format("woff2"); font-weight: 700; font-style: italic; font-display: swap; }
 .bd .s, .bd table.lig td { font-weight: 700; }
 :root {
-  --bg: #f7f5f1; --panel: #fffdf9; --fg: #2a2522; --muted: #807770; --line: #e6e0d8;
-  --accent: #c27a1a; --kw: #b8411e; --str: #3c7a4d; --com: #8a8079; --grid: rgba(194,122,26,0.16);
+  /* one dark purple look, the same in light and dark system themes */
+  --bg: #17111f; --panel: #1f1729; --fg: #ece4f5; --muted: #a196b3; --line: #352a45;
+  --accent: #c39bf5; --kw: #f08cc0; --str: #9bd8a8; --com: #8f84a3; --grid: rgba(195,155,245,0.18);
   --mono: "KKM", ui-monospace, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #1b1916; --panel: #23201c; --fg: #ece6de; --muted: #9c938a; --line: #36312b;
-    --accent: #e3a24a; --kw: #ef8a62; --str: #8ccf9d; --com: #968c83; --grid: rgba(227,162,74,0.18);
-    color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #1b1916; --panel: #23201c; --fg: #ece6de; --muted: #9c938a; --line: #36312b;
-  --accent: #e3a24a; --kw: #ef8a62; --str: #8ccf9d; --com: #968c83; --grid: rgba(227,162,74,0.18);
   color-scheme: dark;
 }
 body { background: var(--bg); color: var(--fg); font-family: var(--mono); }

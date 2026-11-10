@@ -8,6 +8,7 @@ Latin Extended-A) is built from the font's own glyphs.
 Everything works on the font after it has become TrueType and fixed-width, in cell
 coordinates: x from 0 to CELL, y from the descent to the ascent.
 """
+import collections
 import math
 import unicodedata
 
@@ -651,9 +652,18 @@ def korean_extras(font, gs, cmap, weight, made):
         # thickness of the crossing strokes, no further (small digits stay light)
         return weight(out, 68 * (ky - kx) * 0.5, 0.0) if ky - kx > 0.02 else out
 
-    def two_digits(n, area):
-        """Two digits at one size, as large as the area allows, set close together."""
-        x0, y0, x1, y1 = area
+    def like(n, digits):
+        """n's two digits at the size and place of the digits of ⑮ or ⒂."""
+        mid = (M.bounds(flat(digits))[0] + M.bounds(flat(digits))[2]) / 2
+        left = [q for q in digits if (M.bounds(q)[0] + M.bounds(q)[2]) / 2 < mid]
+        right = [q for q in digits if (M.bounds(q)[0] + M.bounds(q)[2]) / 2 >= mid]
+        if not left or not right:
+            return None
+        lb, rb = M.bounds(flat(left)), M.bounds(flat(right))
+        five = M.bounds(M.record(gs, cmap[ord("5")]))
+        kx = (rb[2] - rb[0]) / (five[2] - five[0])
+        ky = (rb[3] - rb[1]) / (five[3] - five[1])
+        gap = rb[0] - lb[2]
         glyphs = []
         for ch in str(n):
             g = M.record(gs, cmap[ord(ch)])
@@ -665,51 +675,22 @@ def korean_extras(font, gs, cmap, weight, made):
                     g = [op for q in cs if q is not dot for op in q]
             glyphs.append(g)
         bs = [M.bounds(g) for g in glyphs]
-        gap = -6                                          # a touch of overlap: tight, but large
-        # the two share the width in proportion to their own widths, so none is left over
-        kx = ((x1 - x0) - gap) / sum(b[2] - b[0] for b in bs)
-        ky = min((y1 - y0) / max(b[3] - b[1] for b in bs), kx * 2.8)
-        kx = min(kx, ky)
+        total = sum(kx * (b[2] - b[0]) for b in bs) + gap
+        left_x = (lb[0] + rb[2]) / 2 - total / 2
         out = []
-        widths = [kx * (b[2] - b[0]) for b in bs]
-        total = sum(widths) + gap
-        left = (x0 + x1) / 2 - total / 2
-        cy = (y0 + y1) / 2
-        for g, b, w in zip(glyphs, bs, widths):
-            one = M.transformed(g, kx, left - kx * b[0], ky, cy - ky * (b[1] + b[3]) / 2)
-            out += weight(one, 68 * (ky - kx) * 0.5, 0.0) if ky - kx > 0.02 else one
-            left += w + gap
+        for g, b in zip(glyphs, bs):
+            one = M.transformed(g, kx, left_x - kx * b[0], ky, rb[1] - ky * b[1])
+            out += weight(one, 68 * (1 - kx) * 0.5, 68 * (1 - ky) * 0.5)
+            left_x += kx * (b[2] - b[0]) + gap
         return out
-
-    def squeeze_parens(parens, gb, k=0.6):
-        """Parentheses drawn in towards their outer edges, leaving more room inside."""
-        out = []
-        for q in parens:
-            b = M.bounds(q)
-            anchor = b[0] if b[0] - gb[0] < 15 else b[2]
-            one = M.transformed(q, k, anchor * (1 - k))
-            out += weight(one, 68 * (1 - k) * 0.5, 0.0)
-        # the thickening grows a contour to the right: set each back on its edge
-        fixed = []
-        for q in M.polygon_points_ops(out):
-            b = M.bounds(q)
-            if (b[0] + b[2]) / 2 < (gb[0] + gb[2]) / 2:
-                fixed += M.transformed(q, 1.0, gb[0] - b[0])
-            else:
-                fixed += M.transformed(q, 1.0, gb[2] - b[2])
-        return fixed
 
     if 0x246E in cmap:                                   # ⑮: keep the ring (the two largest contours)
         cs = sorted(contours(0x246E), key=lambda q: -(M.bounds(q)[2] - M.bounds(q)[0]))
-        ring = cs[:2]
-        hole = M.bounds(ring[1])
-        hw, hh = hole[2] - hole[0], hole[3] - hole[1]
-        # the whole hole: the digits may touch the ring at its curves
-        area = (hole[0] + hw * 0.05, hole[1] + hh * 0.13, hole[2] - hw * 0.05, hole[3] - hh * 0.13)
+        ring, digits = cs[:2], cs[2:]
         for n in range(16, 21):
             cp = 0x246F + (n - 16)
-            if cp not in cmap:
-                made[cp] = flat(ring) + two_digits(n, area)
+            if cp not in cmap and (ops := like(n, digits)):
+                made[cp] = flat(ring) + ops
 
     if 0x2482 in cmap:                                   # ⒂: keep the parentheses (the outermost contours)
         cs = contours(0x2482)
@@ -717,18 +698,10 @@ def korean_extras(font, gs, cmap, weight, made):
         parens = [q for q in cs if M.bounds(q)[0] - gb[0] < 15 or gb[2] - M.bounds(q)[2] < 15]
         digits = [q for q in cs if not any(q is p for p in parens)]
         if len(parens) == 2 and digits:
-            db = M.bounds(flat(digits))
-            sq = squeeze_parens(parens, gb)
-            pcs = M.polygon_points_ops(sq)
-            lp_in = max(M.bounds(q)[2] for q in pcs if (M.bounds(q)[0] + M.bounds(q)[2]) / 2 < (gb[0] + gb[2]) / 2)
-            rp_in = min(M.bounds(q)[0] for q in pcs if (M.bounds(q)[0] + M.bounds(q)[2]) / 2 >= (gb[0] + gb[2]) / 2)
-            # up to the parentheses and a little into them, nearly their full height
-            ph = M.bounds(sq)
-            area = (lp_in - 12, ph[1] + (ph[3] - ph[1]) * 0.1, rp_in + 12, ph[3] - (ph[3] - ph[1]) * 0.1)
             for n in range(16, 21):
                 cp = 0x2483 + (n - 16)
-                if cp not in cmap:
-                    made[cp] = sq + two_digits(n, area)
+                if cp not in cmap and (ops := like(n, digits)):
+                    made[cp] = flat(parens) + ops
 
     if 0x321C in cmap:                                   # ㈜ -> ㈝ (오전), ㈞ (오후)
         cs = contours(0x321C)
@@ -876,6 +849,181 @@ def fractions(gs, cmap, weight, made):
         made[cp] = number(num, top_cy) + bar + number(den, bottom_cy)
 
 
+def math_operators(gs, cmap, weight, made):
+    """The math operators the font draws wide, redrawn in one cell from the font's own
+    letters and the parts of the ligatures: ∪ ∩ ⊂ ⊃ ∈ from U, ≤ ≥ ≪ ≫ from < and > over
+    the bars of =, ≠ ≡ from = and /, ∀ ∃ ⊥ from A E T turned over, ∏ from ㅠ, ∑ from M,
+    ∇ from ㅿ."""
+    need = "-=<>/U.AETV~:|6"
+    if not all(ord(ch) in cmap for ch in need):
+        return
+
+    def rec(ch):
+        return M.record(gs, cmap[ord(ch)])
+
+    hy = M.bounds(rec("-"))
+    axis, stroke = (hy[1] + hy[3]) / 2, hy[3] - hy[1]
+    eq_ops = rec("=")
+    eq_bars = sorted(M.polygon_points_ops(eq_ops), key=lambda q: M.bounds(q)[1])
+    eqb = M.bounds(eq_ops)
+    bar_h = M.bounds(eq_bars[0])[3] - M.bounds(eq_bars[0])[1]
+    bar_gap = M.bounds(eq_bars[1])[1] - M.bounds(eq_bars[0])[3]
+    cx = M.CELL / 2
+    cap = M.bounds(rec("H")) if ord("H") in cmap else (0, 0, 0, 650)
+    side = 420                     # the width an operator fills
+
+    def at(ops, x, y):
+        """Moved so its outline is centred on (x, y)."""
+        b = M.bounds(ops)
+        return M.transformed(ops, 1.0, x - (b[0] + b[2]) / 2, 1.0, y - (b[1] + b[3]) / 2)
+
+    def fit(ops, w=None, h=None, x=cx, y=axis):
+        """Scaled to width w and/or height h (one of them keeps the proportions), the
+        stroke given back to the font's weight, centred on (x, y)."""
+        b = M.bounds(ops)
+        kx = w / (b[2] - b[0]) if w else None
+        ky = h / (b[3] - b[1]) if h else None
+        kx, ky = kx or ky, ky or kx
+        out = M.transformed(ops, kx, 0.0, ky, 0.0)
+        out = weight(out, stroke * (1 - kx), stroke * (1 - ky))
+        return at(out, x, y)
+
+    def bar(x0, x1, y):
+        return M.rect(x0, y - bar_h / 2, x1, y + bar_h / 2)
+
+    def dot(x, y):
+        return at(rec("."), x, y)
+
+    U = rec("U")
+    cup = fit(U, w=side * 0.92, h=side)
+    made[0x222A] = cup                                            # ∪
+    made[0x2229] = flip_v(cup, M.bounds(cup))                     # ∩
+    sub = fit(rotated(U, 3, 0.0, 0.0), w=side * 0.9, h=side * 0.92)   # opening to the right
+    made[0x2282] = sub                                            # ⊂
+    made[0x2283] = flip_h(sub, M.bounds(sub))                     # ⊃
+    low = axis - side * 0.5 - bar_gap * 0.5
+    sub_up = M.transformed(sub, 1.0, 0.0, 1.0, bar_gap * 0.5 + bar_h * 0.5 + side * 0.05)
+    sb = M.bounds(sub_up)
+    made[0x2286] = sub_up + bar(sb[0], sb[2], sb[1] - bar_gap - bar_h / 2)       # ⊆
+    made[0x2287] = flip_h(made[0x2286], (sb[0], 0, sb[2], 0))                    # ⊇
+    small = fit(rotated(U, 3, 0.0, 0.0), w=side * 0.82, h=side * 0.82)
+    smb = M.bounds(small)
+    made[0x2208] = small + bar(smb[0] + stroke * 0.5, smb[2], axis)              # ∈
+    made[0x220B] = flip_h(made[0x2208], (smb[0], 0, smb[2], 0))                  # ∋
+
+    V = rec("V")
+    vee = fit(V, w=side * 0.92, h=side)
+    made[0x2228] = vee                                            # ∨
+    made[0x2227] = flip_v(vee, M.bounds(vee))                     # ∧
+
+    # ≤ ≥ : < and > made shorter, over one bar of =
+    lt = rec("<")
+    rel_h = side * 0.72
+    rel_y = axis + (bar_gap + bar_h) / 2
+    lt_s = fit(lt, w=side * 0.86, h=rel_h, y=rel_y + bar_h * 0.2)
+    lb = M.bounds(lt_s)
+    made[0x2264] = lt_s + bar(lb[0], lb[2], lb[1] - bar_gap * 0.9 - bar_h / 2)  # ≤
+    made[0x2265] = flip_h(made[0x2264], (lb[0], 0, lb[2], 0))                  # ≥
+    # ≪ ≫ : two chevrons, nested as in the >>= ligature
+    one = fit(lt, w=side * 0.62, h=side * 0.9)
+    ob = M.bounds(one)
+    step = stroke * 2.4
+    pair = M.transformed(one, 1.0, -step / 2) + M.transformed(one, 1.0, step / 2)
+    made[0x226A] = at(pair, cx, axis)                             # ≪
+    made[0x226B] = flip_h(made[0x226A], M.bounds(made[0x226A]))   # ≫
+
+    # ≡ ≠ ≒ : the bars of =
+    eq = at(eq_ops, cx, axis)
+    one_bar = eq_bars[0]
+    b0 = M.bounds(one_bar)
+    three = []
+    for i in (-1, 0, 1):
+        three += at(one_bar, cx, axis + i * (bar_h + bar_gap))
+    made[0x2261] = three                                          # ≡
+    slash = fit(rec("/"), h=(eqb[3] - eqb[1]) * 2.3, x=cx, y=axis)
+    made[0x2260] = eq + slash                                     # ≠
+    eb = M.bounds(eq)
+    dy = (eb[3] - eb[1]) / 2 + bar_gap * 1.1
+    made[0x2252] = eq + dot(eb[0] + 40, axis + dy) + dot(eb[2] - 40, axis - dy)  # ≒
+
+    # ∼ ∽ ∶ ∴ ∵ ⋯ ∥
+    tilde = at(rec("~"), cx, axis)
+    made[0x223C] = tilde                                          # ∼
+    made[0x223D] = flip_h(tilde, M.bounds(tilde))                 # ∽
+    made[0x2236] = at(rec(":"), cx, axis)                         # ∶
+    r = side * 0.3
+    made[0x2234] = dot(cx, axis + r * 0.9) + dot(cx - r, axis - r * 0.7) + dot(cx + r, axis - r * 0.7)   # ∴
+    made[0x2235] = dot(cx, axis - r * 0.9) + dot(cx - r, axis + r * 0.7) + dot(cx + r, axis + r * 0.7)   # ∵
+    made[0x22EF] = dot(cx - 150, axis) + dot(cx, axis) + dot(cx + 150, axis)   # ⋯
+    pipe = rec("|")
+    made[0x2225] = at(pipe, cx - 70, axis) + at(pipe, cx + 70, axis)            # ∥
+
+    # ∀ ∃ ⊥ ∂ : letters turned over
+    A = rec("A")
+    made[0x2200] = flip_v(A, M.bounds(A))                         # ∀
+    E = rec("E")
+    made[0x2203] = flip_h(E, M.bounds(E))                         # ∃
+    T = rec("T")
+    made[0x22A5] = flip_v(T, M.bounds(T))                         # ⊥
+    six = rec("6")
+    made[0x2202] = flip_h(six, M.bounds(six))                     # ∂
+
+    # ∏ from ㅠ, ∑ from M turned a quarter: its stems become the two bars, its V the point
+    cap_h, cap_y = cap[3] - cap[1], (cap[1] + cap[3]) / 2
+    if 0x3160 in cmap:
+        made[0x220F] = fit(M.record(gs, cmap[0x3160]), w=side, h=cap_h, y=cap_y)          # ∏
+    if ord("M") in cmap:
+        made[0x2211] = fit(rotated(rec("M"), 1, 0.0, 0.0), w=side, h=cap_h, y=cap_y)      # ∑
+
+    # ∇ ∆ from ㅿ: the triangle as tall as the capitals, turned over for ∇
+    if 0x317F in cmap:
+        tri = M.record(gs, cmap[0x317F])
+        up = fit(tri, w=side, h=cap[3] - cap[1], y=(cap[1] + cap[3]) / 2)
+        made[0x2206] = up                                         # ∆
+        made[0x2207] = flip_v(up, M.bounds(up))                   # ∇
+
+
+UNIT_PARTS = {0x2215: "/"}
+
+
+def units(gs, cmap, weight, made):
+    """㎜ ㎏ ㎡ ...: the letters of the unit, set side by side in two cells. Units
+    of three letters or more are narrowed to fit, and a little shorter."""
+    if ord("-") not in cmap:
+        return
+    hy = M.bounds(M.record(gs, cmap[ord("-")]))
+    stroke = hy[3] - hy[1]
+    avail = 2 * M.CELL - 2 * 34
+    for cp in range(0x3380, 0x33E0):
+        if cp not in cmap:
+            continue
+        parts = unicodedata.decomposition(chr(cp)).split()
+        if not parts or parts[0] != "<square>":
+            continue
+        chars = [UNIT_PARTS.get(int(p, 16), chr(int(p, 16))) for p in parts[1:]]
+        if not all(ord(ch) in cmap for ch in chars):
+            continue
+        glyphs = [M.record(gs, cmap[ord(ch)]) for ch in chars]
+        bs = [M.bounds(g) for g in glyphs]
+        if any(b is None for b in bs):
+            continue
+        gaps = []
+        for ch, nxt in zip(chars, chars[1:]):
+            # the period of a.m. and the superscripts sit close to what they follow
+            gaps.append(10 if ch == "." or nxt in "²³." else 40)
+        width = sum(b[2] - b[0] for b in bs) + sum(gaps)
+        kx = min(1.0, avail / width)
+        ky = min(1.0, kx * 1.3)
+        out, x = [], M.CELL - kx * width / 2
+        for g, b, gap in zip(glyphs, bs, gaps + [0]):
+            one = M.transformed(g, kx, x - kx * b[0], ky, 0.0)
+            if kx < 0.99 or ky < 0.99:
+                one = weight(one, stroke * (1 - kx) * 0.7, stroke * (1 - ky) * 0.7)
+            out += one
+            x += kx * (b[2] - b[0] + gap)
+        made[cp] = out
+
+
 KANA_SCALE = 0.92
 
 
@@ -972,6 +1120,8 @@ def add_symbols(font, to_glyph, weight):
     korean_extras(font, gs, cmap, weight, made)
     arrows(gs, cmap, weight, made)
     fractions(gs, cmap, weight, made)
+    math_operators(gs, cmap, weight, made)
+    units(gs, cmap, weight, made)
     kana_extras(gs, cmap, made, weight)
     if 0x3C2 not in cmap and ord("c") in cmap:              # ς final sigma: c with a tail
         cb = M.bounds(M.record(gs, cmap[ord("c")]))
@@ -981,10 +1131,14 @@ def add_symbols(font, to_glyph, weight):
     names = []
     order = font.getGlyphOrder()
     new_names = []
+    shared = collections.Counter(cmap.values())
     for cp, ops in made.items():
         if not ops:
             continue
         name = cmap.get(cp) or f"uni{cp:04X}"
+        if shared[name] > 1:
+            # the glyph also draws another character (∶ and :): this one gets its own
+            name = f"uni{cp:04X}"
         glyf[name] = to_glyph(ops)
         # two cells for what Unicode calls wide (㈝ ㈞), one for the rest
         wide = unicodedata.east_asian_width(chr(cp)) in "WF"

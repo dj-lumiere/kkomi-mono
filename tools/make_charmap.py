@@ -83,14 +83,13 @@ def main():
                        "c": [[cp, char_name(cp), unicodedata.east_asian_width(chr(cp)) in "WF"] for cp in rest]})
 
     total = len(cps)
-    hangul_lines = "\n".join("".join(chr(cp) for cp in hangul[i:i + 28]) for i in range(0, len(hangul), 28))
     data = json.dumps(blocks, ensure_ascii=False, separators=(",", ":"))
     ligs = "".join(f'<span class="lg"><b>{html.escape(s)}</b><i>{html.escape(s)}</i></span>' for s in LIGATURES)
     toc = "".join(f'<a href="#b{i}">{html.escape(b["ko"])}</a>' for i, b in enumerate(blocks))
     toc += '<a href="#hangul">한글 음절</a><a href="#ligatures">리거처</a>'
 
     page = TEMPLATE.replace("{{TOTAL}}", f"{total:,}").replace("{{TOC}}", toc) \
-        .replace("{{HANGUL_COUNT}}", f"{len(hangul):,}").replace("{{HANGUL}}", html.escape(hangul_lines)) \
+        .replace("{{HANGUL_COUNT}}", f"{len(hangul):,}") \
         .replace("{{LIGS}}", ligs).replace("{{DATA}}", data)
     with open(out_path, "w", encoding="utf-8") as f:
         f.write(page)
@@ -111,19 +110,11 @@ TEMPLATE = """<!doctype html>
 @font-face { font-family: "KKM"; src: url("fonts/woff2/KNPSKkomiMono-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
 @font-face { font-family: "KKM"; src: url("fonts/woff2/KNPSKkomiMono-BoldItalic.woff2") format("woff2"); font-weight: 700; font-style: italic; font-display: swap; }
 :root {
-  --bg: #f7f5f1; --panel: #fffdf9; --fg: #2a2522; --muted: #807770; --line: #e6e0d8;
-  --accent: #c27a1a; --grid: rgba(194,122,26,0.16);
+  /* one dark purple look, the same in light and dark system themes */
+  --bg: #17111f; --panel: #1f1729; --fg: #ece4f5; --muted: #a196b3; --line: #352a45;
+  --accent: #c39bf5; --grid: rgba(195,155,245,0.18);
   --mono: "KKM", ui-monospace, monospace;
-}
-@media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
-    --bg: #1b1916; --panel: #23201c; --fg: #ece6de; --muted: #9c938a; --line: #36312b;
-    --accent: #e3a24a; --grid: rgba(227,162,74,0.18); color-scheme: dark;
-  }
-}
-:root[data-theme="dark"] {
-  --bg: #1b1916; --panel: #23201c; --fg: #ece6de; --muted: #9c938a; --line: #36312b;
-  --accent: #e3a24a; --grid: rgba(227,162,74,0.18); color-scheme: dark;
+  color-scheme: dark;
 }
 body { margin: 0; background: var(--bg); color: var(--fg); font-family: var(--mono); }
 .wrap { max-width: 1100px; margin: 0 auto; padding-block: 28px 64px;
@@ -156,10 +147,22 @@ h2 small { color: var(--muted); font-size: 12px; }
 .cell-on .g { background-image: linear-gradient(to right, var(--grid) 1px, transparent 1px);
   background-size: 0.5em 100%; box-shadow: inset -1px 0 var(--grid); }
 .u { font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
-.it .g, .it pre.h, .it .lg b { font-style: italic; }
-.bd .g, .bd pre.h, .bd .lg b { font-weight: 700; }
+.it .g, .it .lg b { font-style: italic; }
+.bd .g, .bd .lg b { font-weight: 700; }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; }
-pre.h { margin: 0; padding: 14px 16px; font-family: var(--mono); font-size: calc(var(--size, 32px) * 0.7); line-height: 1.5; }
+details.ini { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+details.ini + details.ini { margin-top: 6px; }
+details.ini summary { padding: 10px 16px; }
+.tbl { overflow-x: auto; }
+table.hg { border-collapse: collapse; margin: 0 16px 14px; }
+table.hg th { font-weight: 400; color: var(--muted); font-size: 13px; padding: 4px 6px; }
+table.hg td { padding: 0; border: 1px solid var(--line); }
+table.hg button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer;
+  font-size: calc(var(--size, 32px) * 0.8); line-height: 1.3; padding: 4px 6px; }
+table.hg button:hover { background: var(--bg); }
+table.hg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.it table.hg button { font-style: italic; }
+.bd table.hg button { font-weight: 700; }
 summary { cursor: pointer; font-size: 15px; }
 summary small { color: var(--muted); font-size: 12px; }
 .ligs { display: flex; flex-wrap: wrap; gap: 6px 26px; padding: 14px 16px; }
@@ -206,10 +209,8 @@ footer { color: var(--muted); font-size: 13px; line-height: 1.6; }
   <div id="blocks"></div>
 
   <section id="hangul">
-    <details class="panel">
-      <summary style="padding: 12px 16px">한글 음절 <small>Hangul Syllables · {{HANGUL_COUNT}}자 · 펼치기</small></summary>
-      <pre class="h">{{HANGUL}}</pre>
-    </details>
+    <h2>한글 음절 <small>Hangul Syllables · {{HANGUL_COUNT}}자 · 초성마다 표 하나, 세로는 중성, 가로는 종성</small></h2>
+    <div id="hangul-tables"></div>
   </section>
 
   <section id="ligatures">
@@ -247,6 +248,40 @@ BLOCKS.forEach((b, i) => {
   frag.appendChild(s);
 });
 host.appendChild(frag);
+
+// 한글 음절: one table per initial, vowels down the side, finals across the top
+const INITIALS = "ㄱㄲㄴㄷㄸㄹㅁㅂㅃㅅㅆㅇㅈㅉㅊㅋㅌㅍㅎ";
+const VOWELS = "ㅏㅐㅑㅒㅓㅔㅕㅖㅗㅘㅙㅚㅛㅜㅝㅞㅟㅠㅡㅢㅣ";
+const FINALS = ["–", ..."ㄱㄲㄳㄴㄵㄶㄷㄹㄺㄻㄼㄽㄾㄿㅀㅁㅂㅄㅅㅆㅇㅈㅊㅋㅌㅍㅎ"];
+const tables = document.getElementById("hangul-tables");
+function hangulTable(i) {
+  const head = "<tr><th></th>" + FINALS.map(f => `<th>${f}</th>`).join("") + "</tr>";
+  let rows = "";
+  for (let v = 0; v < 21; v++) {
+    rows += `<tr><th>${VOWELS[v]}</th>`;
+    for (let f = 0; f < 28; f++) {
+      const ch = String.fromCodePoint(0xAC00 + i * 588 + v * 28 + f);
+      rows += `<td><button type="button">${ch}</button></td>`;
+    }
+    rows += "</tr>";
+  }
+  return `<div class="tbl"><table class="hg">${head}${rows}</table></div>`;
+}
+[...INITIALS].forEach((ini, i) => {
+  const d = document.createElement("details");
+  d.className = "ini";
+  d.innerHTML = `<summary>${ini} <small>${String.fromCodePoint(0xAC00 + i * 588)} ~ ${String.fromCodePoint(0xAC00 + i * 588 + 587)} · 588자</small></summary>`;
+  // the table is built the first time it is opened
+  d.addEventListener("toggle", () => {
+    if (d.open && !d.querySelector("table")) d.insertAdjacentHTML("beforeend", hangulTable(i));
+  });
+  if (i === 0) d.open = true;
+  tables.appendChild(d);
+});
+tables.addEventListener("click", e => {
+  const b = e.target.closest("button");
+  if (b) copy(b.textContent, "U+" + b.textContent.codePointAt(0).toString(16).toUpperCase());
+});
 
 const toast = document.getElementById("toast");
 let timer;
