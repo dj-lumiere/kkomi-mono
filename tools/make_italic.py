@@ -44,11 +44,24 @@ def path_op(a_ops, b_ops, kind):
     out.draw(rec)
     # joining two strokes can trap specks of empty space where their edges cross:
     # drop contours far smaller than any real counter
-    kept = []
-    for part in M.polygon_points_ops(rec.value):
-        if abs(M.signed_area(M.polygon_points(part)[0])) >= 2500:
-            kept += part
-    return kept
+    parts = [part for part in M.polygon_points_ops(rec.value)
+             if abs(M.signed_area(M.polygon_points(part)[0])) >= 2500]
+    if not parts:
+        return []
+    # skia turns outlines its own way: turn them back the way the font's outer contours
+    # run (clockwise), or thickening them later would thin them instead
+    outer = max(parts, key=lambda q: abs(M.signed_area(M.polygon_points(q)[0])))
+    if M.signed_area(M.polygon_points(outer)[0]) > 0:
+        from fontTools.pens.reverseContourPen import ReverseContourPen
+        flipped = []
+        for part in parts:
+            r = RecordingPen()
+            rev = ReverseContourPen(r)
+            for op, args in part:
+                getattr(rev, op)(*args)
+            flipped.append(r.value)
+        parts = flipped
+    return [op for part in parts for op in part]
 
 
 def box(x0, y0, x1, y1):
@@ -60,6 +73,16 @@ def lower_part(ops, y_cut):
     """The part of an outline below a height."""
     import pathops
     return path_op(ops, box(-10000, -10000, 10000, y_cut), pathops.PathOp.INTERSECTION)
+
+
+def below_in_stem(ops, y, near_x):
+    """ops with the stem near near_x taken away above y: the stem is cut, but a hook
+    that curls back up beside it keeps its tip."""
+    import pathops
+    pair = M.stem_pair(ops, y, near_x)
+    if not pair:
+        return lower_part(ops, y)
+    return path_op(ops, box(pair[0] - 30, y, pair[1] + 30, 10000), pathops.PathOp.DIFFERENCE)
 
 
 def hook_of(t_ops, x_height):
@@ -78,11 +101,15 @@ def right_stem_hook(ops, hook, x_height):
     if len(xs) < 2:
         return ops
     x0, x1 = xs[-2], xs[-1]
+    span = 30
     # the old foot, with the bit that curls out to the right of the stem
-    cut = path_op(ops, box(x0 - 4, -10000, x1 + 70, y_cut), pathops.PathOp.DIFFERENCE)
+    cut = path_op(ops, box(x0 - 4, -10000, x1 + 70, y_cut + span), pathops.PathOp.DIFFERENCE)
     stem_cx = (x0 + x1) / 2
     moved = M.transformed(piece, 1.0, stem_cx - hook_cx)
-    return path_op(cut, moved, pathops.PathOp.UNION)
+    # stem and hook meet through a tapered piece, so their widths join without a step
+    join = M.bridge(ops, moved, y_cut, span, stem_cx, False)
+    low = below_in_stem(moved, y_cut - span, stem_cx)
+    return path_op(path_op(cut, low, pathops.PathOp.UNION), join, pathops.PathOp.UNION)
 
 
 def f_descender(f_ops, j_ops):
@@ -95,11 +122,14 @@ def f_descender(f_ops, j_ops):
     if len(fx) < 2 or len(jx) < 2:
         return f_ops
     # j below the cut (the hook), lined up under f's stem
-    tail = lower_part(j_ops, y_cut + 45)
-    tail = M.transformed(tail, 1.0, (fx[0] + fx[1]) / 2 - (jx[-2] + jx[-1]) / 2)
+    span = 30
+    fc = (fx[0] + fx[1]) / 2
+    j_moved = M.transformed(j_ops, 1.0, fc - (jx[-2] + jx[-1]) / 2)
+    tail = below_in_stem(j_moved, y_cut - span, fc)
     # f's old foot goes, flared ends and all
-    cut = path_op(f_ops, box(fx[0] - 40, -10000, fx[1] + 40, y_cut), pathops.PathOp.DIFFERENCE)
-    return path_op(cut, tail, pathops.PathOp.UNION)
+    cut = path_op(f_ops, box(fx[0] - 40, -10000, fx[1] + 40, y_cut + span), pathops.PathOp.DIFFERENCE)
+    join = M.bridge(f_ops, j_moved, y_cut, span, fc, False)
+    return path_op(path_op(cut, tail, pathops.PathOp.UNION), join, pathops.PathOp.UNION)
 
 
 def arcs_x(x_ops, close_ops, open_ops):

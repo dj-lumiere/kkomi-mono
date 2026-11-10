@@ -220,10 +220,12 @@ def l_with_t_hook(l_ops, t_ops, ccw, under_bar=False):
         y_cut = by0 - 4
     l_rows = [r for r in stem_span(l_ops) if abs(r[0] - y_cut) < (tb[3] - tb[1]) * 0.1]
     l_cx = l_rows[0][1] if l_rows else (M.bounds(l_ops)[0] + M.bounds(l_ops)[2]) / 2
-    overlap = 8
-    top = clip(l_ops, y_cut - overlap, 100000)
-    bottom = M.transformed(clip(t_ops, -100000, y_cut + overlap), 1.0, l_cx - t_cx)
-    out = []
+    # the two stems meet through a short tapered piece, so their widths join smoothly
+    span = 30
+    t_moved = M.transformed(t_ops, 1.0, l_cx - t_cx)
+    top = clip(l_ops, y_cut + span, 100000)
+    bottom = clip(t_moved, -100000, y_cut - span)
+    out = M.bridge(l_ops, t_moved, y_cut, span, l_cx, ccw)
     for part in M.polygon_points_ops(top) + M.polygon_points_ops(bottom):
         pts = M.polygon_points(part)[0]
         if (M.signed_area(pts) > 0) != ccw:

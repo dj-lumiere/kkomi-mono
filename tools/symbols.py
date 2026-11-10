@@ -849,6 +849,68 @@ def fractions(gs, cmap, weight, made):
         made[cp] = number(num, top_cy) + bar + number(den, bottom_cy)
 
 
+def below(ops, y):
+    """The part of an outline under the height y, holes kept as holes."""
+    import pathops
+    shape, box = pathops.Path(), pathops.Path()
+    pen = shape.getPen()
+    for op, args in ops:
+        getattr(pen, op)(*args)
+    bp = box.getPen()
+    bp.moveTo((-5000, -5000)); bp.lineTo((-5000, y)); bp.lineTo((5000, y)); bp.lineTo((5000, -5000)); bp.closePath()
+    out = pathops.op(shape, box, pathops.PathOp.INTERSECTION)
+    from fontTools.pens.recordingPen import RecordingPen
+    rec = RecordingPen()
+    out.draw(rec)
+    ops2 = rec.value
+    # skia turns outer contours its own way: turn them all to the font's if needed
+    cs = M.polygon_points_ops(ops2)
+    if cs:
+        outer = max(cs, key=lambda q: abs(M.signed_area(M.polygon_points(q)[0])))
+        if (M.signed_area(M.polygon_points(outer)[0]) < 0) != M.CLOCKWISE:
+            from fontTools.pens.reverseContourPen import ReverseContourPen
+            r2 = RecordingPen()
+            rev = ReverseContourPen(r2)
+            for op, args in ops2:
+                getattr(rev, op)(*args)
+            ops2 = r2.value
+    return ops2
+
+
+def partial(six):
+    """∂: the 6 turned around, its stem cut short and ended in a round hook that curls
+    back over the bowl, as a ∂ does."""
+    b = M.bounds(six)
+    turned = flip_h(six, b)
+    height = b[3] - b[1]
+    cut = b[1] + height * 0.66
+    # the stem's middle and width where it is cut
+    xs = M.crossings(turned, cut)
+    if len(xs) < 2:
+        return turned
+    inner, outer = xs[-2], xs[-1]
+    width = outer - inner
+    mid = (inner + outer) / 2
+    body = below(turned, cut)
+    # the hook: an arc from the top of the stem over to the left, ending a little lower
+    r = (b[3] - width / 2 - cut) * 0.95
+    cx, cy = mid - r, cut
+    steps = 20
+    end = math.radians(165)
+    outer_arc = [(cx + (r + width / 2) * math.cos(end * i / steps), cy + (r + width / 2) * math.sin(end * i / steps))
+                 for i in range(steps + 1)]
+    inner_arc = [(cx + (r - width / 2) * math.cos(end * i / steps), cy + (r - width / 2) * math.sin(end * i / steps))
+                 for i in range(steps + 1)]
+    band = outer_arc + inner_arc[::-1]
+    # below the cut the band runs straight down a little, so it joins the stem
+    band = [(mid + width / 2, cut - width * 1.2)] + band + [(mid - width * 0.75, cut - width * 1.2)]
+    if (M.signed_area(band) < 0) != M.CLOCKWISE:
+        band = band[::-1]
+    hook = [("moveTo", (band[0],))] + [("lineTo", (q,)) for q in band[1:]] + [("closePath", ())]
+    tip = (cx + r * math.cos(end), cy + r * math.sin(end))
+    return body + hook + M.circle(tip, width / 2)
+
+
 def math_operators(gs, cmap, weight, made):
     """The math operators the font draws wide, redrawn in one cell from the font's own
     letters and the parts of the ligatures: ∪ ∩ ⊂ ⊃ ∈ from U, ≤ ≥ ≪ ≫ from < and > over
@@ -891,6 +953,18 @@ def math_operators(gs, cmap, weight, made):
     def bar(x0, x1, y):
         return M.rect(x0, y - bar_h / 2, x1, y + bar_h / 2)
 
+    us_ops = rec("_")
+    us = M.bounds(us_ops)
+    us_h = us[3] - us[1]
+
+    def under(x0, x1, y):
+        """The font's _ made as long as x0..x1, its ends keeping their shape, centred on y."""
+        mid = (us[0] + us[2]) / 2
+        dy = y - (us[1] + us[3]) / 2
+        return [(op, tuple(None if pt is None else
+                           (pt[0] + (x0 - us[0] if pt[0] < mid else x1 - us[2]), pt[1] + dy)
+                           for pt in args)) for op, args in us_ops]
+
     def dot(x, y):
         return at(rec("."), x, y)
 
@@ -904,7 +978,7 @@ def math_operators(gs, cmap, weight, made):
     low = axis - side * 0.5 - bar_gap * 0.5
     sub_up = M.transformed(sub, 1.0, 0.0, 1.0, bar_gap * 0.5 + bar_h * 0.5 + side * 0.05)
     sb = M.bounds(sub_up)
-    made[0x2286] = sub_up + bar(sb[0], sb[2], sb[1] - bar_gap - bar_h / 2)       # ⊆
+    made[0x2286] = sub_up + under(sb[0], sb[2], sb[1] - bar_gap - us_h / 2)      # ⊆
     made[0x2287] = flip_h(made[0x2286], (sb[0], 0, sb[2], 0))                    # ⊇
     small = fit(rotated(U, 3, 0.0, 0.0), w=side * 0.82, h=side * 0.82)
     smb = M.bounds(small)
@@ -922,7 +996,7 @@ def math_operators(gs, cmap, weight, made):
     rel_y = axis + (bar_gap + bar_h) / 2
     lt_s = fit(lt, w=side * 0.86, h=rel_h, y=rel_y + bar_h * 0.2)
     lb = M.bounds(lt_s)
-    made[0x2264] = lt_s + bar(lb[0], lb[2], lb[1] - bar_gap * 0.9 - bar_h / 2)  # ≤
+    made[0x2264] = lt_s + under(lb[0], lb[2], lb[1] - bar_gap * 0.9 - us_h / 2)  # ≤
     made[0x2265] = flip_h(made[0x2264], (lb[0], 0, lb[2], 0))                  # ≥
     # ≪ ≫ : two chevrons, nested as in the >>= ligature
     one = fit(lt, w=side * 0.62, h=side * 0.9)
@@ -960,13 +1034,36 @@ def math_operators(gs, cmap, weight, made):
 
     # ∀ ∃ ⊥ ∂ : letters turned over
     A = rec("A")
-    made[0x2200] = flip_v(A, M.bounds(A))                         # ∀
+    # √: in a box of half an em, from the baseline up, through (0, 0.5), (0.5, 0) and
+    # (1, 1) of that box, drawn with the round pen and kept inside the cell
+    s = stroke
+    em2 = M.CELL
+
+    def in_box(u, v):
+        return (s / 2 + u * (em2 - s), s / 2 + v * (em2 - s))
+
+    made[0x221A] = (round_line(in_box(0, 0.5), in_box(0.5, 0), s)
+                    + round_line(in_box(0.5, 0), in_box(1, 1), s))                # √
+
+    # ∀: two legs meeting at the foot and a bar, drawn with the font's round pen so no
+    # end of the A's crossbar is left sticking out
+    ab = M.bounds(A)
+    s = stroke
+    tl, tr = (ab[0] + s / 2, ab[3] - s / 2), (ab[2] - s / 2, ab[3] - s / 2)
+    foot = ((ab[0] + ab[2]) / 2, ab[1] + s / 2)
+    by = ab[1] + (ab[3] - ab[1]) * 0.58
+
+    def on_leg(top, y):
+        k = (y - foot[1]) / (top[1] - foot[1])
+        return (foot[0] + (top[0] - foot[0]) * k, y)
+
+    made[0x2200] = (round_line(tl, foot, s) + round_line(tr, foot, s)
+                    + round_line(on_leg(tl, by), on_leg(tr, by), s))           # ∀
     E = rec("E")
     made[0x2203] = flip_h(E, M.bounds(E))                         # ∃
     T = rec("T")
     made[0x22A5] = flip_v(T, M.bounds(T))                         # ⊥
-    six = rec("6")
-    made[0x2202] = flip_h(six, M.bounds(six))                     # ∂
+    made[0x2202] = partial(rec("6"))                              # ∂
 
     # ∏ from ㅠ, ∑ from M turned a quarter: its stems become the two bars, its V the point
     cap_h, cap_y = cap[3] - cap[1], (cap[1] + cap[3]) / 2
@@ -975,12 +1072,17 @@ def math_operators(gs, cmap, weight, made):
     if ord("M") in cmap:
         made[0x2211] = fit(rotated(rec("M"), 1, 0.0, 0.0), w=side, h=cap_h, y=cap_y)      # ∑
 
-    # ∇ ∆ from ㅿ: the triangle as tall as the capitals, turned over for ∇
+    # ∇ ∆ after ㅿ: a triangle as tall as the capitals, turned over for ∇
     if 0x317F in cmap:
-        tri = M.record(gs, cmap[0x317F])
-        up = fit(tri, w=side, h=cap[3] - cap[1], y=(cap[1] + cap[3]) / 2)
-        made[0x2206] = up                                         # ∆
-        made[0x2207] = flip_v(up, M.bounds(up))                   # ∇
+        # the size of ㅿ's triangle, redrawn with the round pen: its strokes cross at the
+        # top, and those ends would show
+        s = stroke
+        x0, x1 = cx - side / 2 + s / 2, cx + side / 2 - s / 2
+        y0, y1 = cap[1] + s / 2, cap[3] - s / 2
+        top, left, right = (cx, y1), (x0, y0), (x1, y0)
+        made[0x2206] = round_line(left, top, s) + round_line(top, right, s) + round_line(right, left, s)   # ∆
+        made[0x2207] = (round_line((x0, y1), (cx, y0), s) + round_line((cx, y0), (x1, y1), s)
+                        + round_line((x1, y1), (x0, y1), s))                                              # ∇
 
 
 UNIT_PARTS = {0x2215: "/"}

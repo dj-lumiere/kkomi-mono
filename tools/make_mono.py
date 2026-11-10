@@ -686,6 +686,74 @@ def circle(center, radius, steps=24):
     return [("moveTo", (pts[0],))] + [("lineTo", (p,)) for p in pts[1:]] + [("closePath", ())]
 
 
+def flattened(ops, steps=16):
+    """The outline with its curves walked point by point, so crossings() measures the
+    curve itself and not the polygon of its control points."""
+    from fontTools.pens.basePen import BasePen
+    from fontTools.pens.recordingPen import RecordingPen
+    rec = RecordingPen()
+
+    class Flat(BasePen):
+        def _moveTo(self, p):
+            rec.moveTo(p)
+
+        def _lineTo(self, p):
+            rec.lineTo(p)
+
+        def _curveToOne(self, p1, p2, p3):
+            p0 = self._getCurrentPoint()
+            for i in range(1, steps + 1):
+                s = i / steps
+                u = 1 - s
+                rec.lineTo((u ** 3 * p0[0] + 3 * u * u * s * p1[0] + 3 * u * s * s * p2[0] + s ** 3 * p3[0],
+                            u ** 3 * p0[1] + 3 * u * u * s * p1[1] + 3 * u * s * s * p2[1] + s ** 3 * p3[1]))
+
+        def _qCurveToOne(self, p1, p2):
+            p0 = self._getCurrentPoint()
+            for i in range(1, steps + 1):
+                s = i / steps
+                u = 1 - s
+                rec.lineTo((u * u * p0[0] + 2 * u * s * p1[0] + s * s * p2[0],
+                            u * u * p0[1] + 2 * u * s * p1[1] + s * s * p2[1]))
+
+        def _closePath(self):
+            rec.closePath()
+
+        def _endPath(self):
+            rec.endPath()
+
+    pen = Flat(None)
+    for op, args in ops:
+        getattr(pen, op)(*args)
+    return rec.value
+
+
+def stem_pair(ops, y, near_x):
+    """The left and right edge of the stroke nearest near_x at height y."""
+    xs = crossings(flattened(ops), y)
+    pairs = [(xs[i], xs[i + 1]) for i in range(0, len(xs) - 1, 2)]
+    if not pairs:
+        return None
+    return min(pairs, key=lambda p: abs((p[0] + p[1]) / 2 - near_x))
+
+
+def bridge(top_ops, bottom_ops, y, span, near_x, ccw):
+    """Where a stem from one glyph meets a stem from another at height y: the piece
+    between y - span and y + span, running from the lower stem's edges to the upper's,
+    so the two widths meet without a step. The two parts are cut back to y +- span."""
+    e = 12                                 # well into each part, so no seam is left
+    a, a_in = stem_pair(top_ops, y + span + e, near_x), stem_pair(top_ops, y + span, near_x)
+    b, b_in = stem_pair(bottom_ops, y - span - e, near_x), stem_pair(bottom_ops, y - span, near_x)
+    if not (a and a_in and b and b_in):
+        return []
+    # inside each part the piece follows that part's own edges, so the outline has no step
+    pts = [(a[0], y + span + e), (a[1], y + span + e), (a_in[1], y + span), (b_in[1], y - span),
+           (b[1], y - span - e), (b[0], y - span - e), (b_in[0], y - span), (a_in[0], y + span)]
+    if ccw:
+        pts = pts[::-1]
+    return [("moveTo", (pts[0],))] + [("lineTo", (p,)) for p in pts[1:]] + [("closePath", ())]
+
+
 def clip_polygon(ops, poly):
     """The part of an outline inside a polygon, through skia-pathops, turned the font's way."""
     import pathops
