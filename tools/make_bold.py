@@ -11,10 +11,19 @@ out of the cell.
 The weights aim at a stem of about 12.5 percent of the cap height for Regular (400)
 and 17.5 percent for Bold (700).
 
+The finished font is hinted with ttfautohint, so strokes line up with the pixels at
+small sizes on Windows. The letters below U+2000 (Latin, Greek, Cyrillic and the
+rest), their alternates and the ligatures keep their hints. Hangul and the symbols have
+no script ttfautohint knows, so they are left without.
+
+Needs: fonttools, skia-pathops, ttfautohint-py.
 Usage: make_bold.py <base.ttf> <out.ttf> <Regular|Italic|Bold|Bold Italic>
 """
+import io
 import os
 import sys
+
+import ttfautohint
 
 from fontTools.ttLib import TTFont
 from fontTools.ttLib.removeOverlaps import removeOverlaps
@@ -84,6 +93,22 @@ def main():
             rec.string = base if style == "Regular" else f"{base} {style}"
         elif rec.nameID == 17:
             rec.string = style
+    buf = io.BytesIO()
+    font.save(buf)
+    hinted = ttfautohint.ttfautohint(in_buffer=buf.getvalue(), no_info=True,
+                                     default_script="latn", fallback_script="none")
+    # ttfautohint also writes code for the glyphs of no script it knows, and that code
+    # only scales them: for the Hangul it would add 4 MB. Those glyphs go without.
+    font = TTFont(io.BytesIO(hinted))
+    keep = {n for cp, n in font.getBestCmap().items() if cp < 0x2000}
+    glyf = font["glyf"]
+    for name in font.getGlyphOrder():
+        base, _, suffix = name.partition(".")
+        if name in keep or (suffix and base in keep) or suffix.startswith(("liga", "spacer")):
+            continue
+        g = glyf[name]
+        if hasattr(g, "program"):
+            g.program.fromBytecode(b"")
     font.save(out)
     print("wrote", out)
 

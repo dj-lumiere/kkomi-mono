@@ -33,7 +33,7 @@ VS Code 예:
 
 ### 웹에서 쓰기
 
-`fonts/woff2/`에 같은 네 벌의 woff2 파일이 있습니다. 하나에 약 1.7MB입니다.
+`fonts/woff2/`에 같은 네 벌의 woff2 파일이 있습니다. 하나에 약 1.9MB입니다.
 
 ```css
 @font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; }
@@ -64,16 +64,29 @@ code, pre { font-family: "KNPS Kkomi Mono", monospace; }
 - 조합이 안 되는 곳(일부 터미널)에서는 조합용 자모를 정해진 자리에 그립니다. 초성은 위 왼쪽, 세로 모음은 오른쪽, 가로 모음은 초성 밑, 받침은 아래쪽이라 겹쳐도 한 음절로 읽힙니다.
 - 초성 하나만 있거나, 다른 글자 뒤에 중성·종성이 오면 낱자 모양(`ㄱ`, `ㅏ`)으로 두 칸에 따로 나옵니다. 초성 바로 뒤의 종성(`ᄀᆲ`)은 두 칸 안에 겹쳐 그립니다.
 - 낱자 모음(`ㅏ ㅜ ㅡ` 등)은 두 칸의 가운데, 한글 음절의 가운데 높이에 놓았습니다.
-- 초성 채움(U+115F)과 중성 채움(U+1160)을 넣었습니다. 보이지 않는 글자입니다.
+- 초성 채움(U+115F)과 중성 채움(U+1160)을 넣었습니다. 보이지 않는 글자이며, `ss04`를 켜면 점으로 된 동그라미로 보입니다.
 - `법`의 ㅂ 받침이 다른 ㅓ 글자보다 훨씬 넓어서, `업`의 받침으로 바꿨습니다.
 
 **리거처** (`calt`)
 - 화살표: `->` `<-` `<->` `=>` `<=>` `-->` `<--` `==>` `<==` `~>` `<~` `~~>`
 - 비교: `==` `===` `!=` `!==` `<=` `>=`
-- 그 밖: `>>=` `=<<` `<>` `|>` `<|` `/\` `\/`
+- 그 밖: `|>` `<|` `/\` `\/`
+- 가운뎃점 `...` → `⋯`, 대입 `:=` → `≔`
 - 리거처도 원래 글자 수만큼의 칸을 차지해서, 열이 어긋나지 않습니다.
 - `<!--` `====` `<==>` `<|>`처럼 앞뒤에 연산자 글자가 붙으면 리거처가 생기지 않습니다.
 - `/\` `\/`는 앞뒤가 영문자, 숫자, `_`가 아닐 때만 바뀝니다. 정규식 `/\d+/`나 `http:\/\/`는 그대로 나옵니다.
+- `....`처럼 점이 넷 이상이거나 `::=` `=:=`처럼 앞뒤에 연산자 글자가 붙으면 `⋯` `≔`로 바뀌지 않습니다.
+
+**골라 쓰는 글자** (기본은 꺼져 있고, 편집기에서 켭니다)
+
+| 기능 | 바뀌는 것 |
+|---|---|
+| `ss01` | `&&` → `∧`, `\|\|` → `∨` (`&&&` `\|\|=` `\|\|\|`는 그대로) |
+| `ss02` | 원본 꼬미체의 `0 i j l`: 점 없는 0, 둥근 점의 i·j, 꼬리 없는 l |
+| `ss03` | Italic의 `a d f h i j k l m n u x y`와 i 악센트 글자를 필기체 대신 똑바른 글자를 기울인 모양으로 |
+| `ss04` | 초성 채움(U+115F)과 중성 채움(U+1160)을 자모 자리에 점으로 된 동그라미로 |
+
+VS Code에서는 `"editor.fontLigatures": "'ss01', 'ss03'"`처럼 켤 기능을 적습니다. 리거처(`calt`)는 이렇게 적어도 함께 켜집니다.
 
 **추가한 글자**
 - 라틴 확장-A, 악센트 글자, 강세 부호가 붙은 그리스 문자
@@ -102,12 +115,15 @@ code, pre { font-family: "KNPS Kkomi Mono", monospace; }
 **굵기**
 - Regular는 세로획이 대문자 높이의 약 12.5%, Bold는 약 17%가 되도록 획을 고르게 두껍게 했습니다.
 
+**힌팅**
+- 라틴, 그리스, 키릴 문자와 리거처에 ttfautohint 힌트를 넣었습니다. Windows에서 작은 크기(10~14px)일 때 획이 픽셀에 맞춰집니다. 한글과 기호에는 힌트가 없습니다.
+
 ## 다시 만들기
 
-Python 3과 `fonttools`, `skia-pathops`가 필요합니다.
+Python 3과 `fonttools`, `skia-pathops`, `ttfautohint-py`가 필요합니다.
 
 ```sh
-pip install fonttools skia-pathops brotli
+pip install fonttools skia-pathops brotli ttfautohint-py
 cd tools
 python make_mono_static.py ../source/KNPSKkomi.otf ../base/KNPSKkomiMono-Base.ttf "KNPS Kkomi" "KNPS Kkomi Mono"
 python make_italic.py ../base/KNPSKkomiMono-Base.ttf ../base/KNPSKkomiMono-BaseItalic.ttf

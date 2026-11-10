@@ -692,6 +692,33 @@ def add_conjoining_jamo(font, to_glyph, weight):
         for table in font["cmap"].tables:
             if table.isUnicode():
                 table.cmap[cp] = name
+    # ss04: the fillers drawn as a ring of dots where their jamo would stand, the
+    # initial filler in the initial's place, the vowel filler in the vowel's place
+    period = M.record(gs, cmap[ord(".")])
+    pb = M.bounds(period)
+    k = 0.55
+
+    def dotted_ring(slot, dx):
+        cx, cy = (slot[0] + slot[2]) / 2 + dx, (slot[1] + slot[3]) / 2
+        r = min(slot[2] - slot[0], slot[3] - slot[1]) * 0.46
+        out = []
+        for i in range(12):
+            a = 2 * math.pi * i / 12
+            x, y = cx + r * math.sin(a), cy + r * math.cos(a)
+            out += M.transformed(period, k, x - k * (pb[0] + pb[2]) / 2, k, y - k * (pb[1] + pb[3]) / 2)
+        return out
+
+    visible = []
+    for cp, slot, dx in ((0x115F, JAMO_SLOT_INITIAL, 0), (0x1160, JAMO_SLOT_TALL, -wide)):
+        if cp not in font.getBestCmap():
+            continue
+        name = font.getBestCmap()[cp]
+        alt = f"{name}.ss04"
+        glyf[alt] = to_glyph(dotted_ring(slot, dx))
+        hmtx[alt] = hmtx[name]
+        new.append(alt)
+        visible.append((name, alt))
+    M.ALTERNATES["ss04"] = visible
     font.setGlyphOrder(order + [n for n in new if n not in order])
     glyf.glyphOrder = font.getGlyphOrder()
     cmap = font.getBestCmap()

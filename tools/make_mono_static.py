@@ -15,6 +15,7 @@ ligatures from make_mono.py.
 Needs: fonttools, skia-pathops.
 Usage: make_mono_static.py <font.otf|ttf> <output.ttf> <old family> <new family>
 """
+import copy
 import math
 import sys
 import unicodedata
@@ -470,6 +471,17 @@ def main():
     cmap = font.getBestCmap()
     zero, period = cmap.get(ord("0")), cmap.get(ord("."))
     glyph_i, glyph_l = cmap.get(ord("i")), cmap.get(ord("l"))
+    # ss02: the font's own 0 i j l, placed in the cell as they come (no dot in the
+    # zero, the i and j with their round dots, the l without its hook)
+    M.ALTERNATES["ss02"] = []
+    for ch in "0ijl":
+        name = cmap.get(ord(ch))
+        if name:
+            alt = f"{name}.ss02"
+            alias[alt], kinds[alt], hmtx[alt] = name, kinds[name], hmtx[name]
+            order.append(alt)
+            M.ALTERNATES["ss02"].append((name, alt))
+    font.setGlyphOrder(order)
     hangul = {n for cp, n in cmap.items() if is_hangul(cp)}
     compat_jamo = {n for cp, n in cmap.items() if 0x3131 <= cp <= 0x318E}
     # the vowels ㅏ..ㅣ and the old ones (ㆇ..ㆎ): centred on the middle of the syllables
@@ -558,13 +570,29 @@ def main():
 
     jamo, compose_fea = symbols.add_conjoining_jamo(font, to_tt_glyph_quadratic, embolden)
     print(f"conjoining jamo: {len(jamo)}")
-    ligs = M.add_ligatures(font, kinds, relation=((1.65, 0.72), embolden), extra_fea=compose_fea)
-    ligs += jamo
     symbols.redraw_i_l(font, to_tt_glyph_quadratic)
     accented = add_accented(font)
     print(f"accented letters: {len(accented)}")
-    ligs += accented
+    # ss03: the letters the italic draws in cursive, kept as copies of the upright ones
+    # so the italic can slant them plainly. Filled in once the upright ones are final.
+    cmap = font.getBestCmap()
+    plain = [cmap[c] for c in [ord(ch) for ch in "adfhijklmnuxy"]
+             + [0xEC, 0xED, 0xEE, 0xEF, 0x129, 0x12B, 0x12D, 0x12F, 0x131] if c in cmap]
+    M.ALTERNATES["ss03"] = [(name, f"{name}.ss03") for name in plain]
+    for name, alt in M.ALTERNATES["ss03"]:
+        font["glyf"][alt] = TTGlyphPen(None).glyph()
+        hmtx[alt] = hmtx[name]
+    font.setGlyphOrder(font.getGlyphOrder() + [alt for _, alt in M.ALTERNATES["ss03"] if alt not in font.getGlyphOrder()])
+    font["glyf"].glyphOrder = font.getGlyphOrder()
+    # the ligatures and every feature, now that all the glyphs they name exist
+    ligs = M.add_ligatures(font, kinds, relation=((1.65, 0.72), embolden), extra_fea=compose_fea)
+    ligs += jamo + accented
     drawn_symbols = symbols.add_symbols(font, to_tt_glyph_quadratic, embolden)
+    M.fill_from_symbols(font, embolden, to_tt_glyph_quadratic)
+    for name, alt in M.ALTERNATES["ss03"]:
+        font["glyf"][alt] = copy.deepcopy(font["glyf"][name])
+        ligs.append(alt)
+    ligs += [alt for _, alt in M.ALTERNATES["ss02"]]
     print(f"symbols: {len(drawn_symbols)}")
     ligs += drawn_symbols
     removeOverlaps(font, glyphNames=narrow + ligs, removeHinting=True, ignoreErrors=True)

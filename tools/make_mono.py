@@ -70,8 +70,6 @@ LIGATURES = [
     ("less_hyphen_hyphen", "<--"),
     ("equal_equal_greater", "==>"),
     ("less_equal_equal", "<=="),
-    ("greater_greater_equal", ">>="),
-    ("equal_less_less", "=<<"),
     ("tilde_tilde_greater", "~~>"),
     ("hyphen_greater", "->"),
     ("less_hyphen", "<-"),
@@ -82,18 +80,44 @@ LIGATURES = [
     ("greater_equal", ">="),
     ("tilde_greater", "~>"),
     ("less_tilde", "<~"),
-    ("less_greater", "<>"),
     ("bar_greater", "|>"),
     ("less_bar", "<|"),
     ("slash_backslash", "/\\"),
     ("backslash_slash", "\\/"),
+    ("period_period_period", "..."),
+    ("colon_equal", ":="),
+    ("ampersand_ampersand", "&&"),
+    ("bar_bar", "||"),
 ]
+# These are off by default and turned on with their feature: not everyone reads
+# `&&` and `||` as the logic symbols.
+STYLISTIC = {"ampersand_ampersand": "ss01", "bar_bar": "ss01"}
+FEATURE_NAMES = {
+    "ss01": "Logic symbols for && and ||",
+    "ss02": "Original 0 i j l",
+    "ss03": "Italic letters without cursive forms",
+    "ss04": "Visible Hangul fillers",
+}
+# Alternate glyphs turned on by a feature: tag -> [(glyph, alternate)]. The build adds
+# to it before the features are written.
+ALTERNATES = {}
+# Drawn after the symbols, from the font's own symbol widened to two cells.
+FROM_SYMBOL = {"ampersand_ampersand": 0x2227, "bar_bar": 0x2228}
 # A ligature is not formed when one of these stands right before or after it,
 # so `<!--`, `<==>`, `<|>` and `====` keep their plain characters.
 OPERATOR_CHARS = "-=<>!~|/\\"
 # These also need a space (or anything but a letter, digit or _) on both sides, so
 # regular expressions (`/\d+/`) and escaped slashes (`http:\/\/`) stay as typed.
 WORD_GUARDED = {"slash_backslash", "backslash_slash"}
+# Ligatures guarded by other characters than OPERATOR_CHARS: `....` keeps its dots,
+# `::=` its colons, `&&&` its ampersands.
+GUARD_CHARS = {
+    "period_period_period": ".",
+    "colon_equal": OPERATOR_CHARS + ":",
+    "ampersand_ampersand": OPERATOR_CHARS + "&",
+}
+LIGATURE_CHARS = "".join(sorted(set(OPERATOR_CHARS + "".join(c for _, c in LIGATURES)
+                                    + "".join(GUARD_CHARS.values()))))
 
 
 # ---------------------------------------------------------------- outlines
@@ -385,7 +409,7 @@ def add_ligatures(font, kinds, relation=None, extra_fea=""):
     the stroke width the squeeze took."""
     glyph_set = font.getGlyphSet()
     cmap = font.getBestCmap()
-    gname = {ch: cmap[ord(ch)] for ch in OPERATOR_CHARS}
+    gname = {ch: cmap[ord(ch)] for ch in LIGATURE_CHARS}
 
     hyphen = bounds(record(glyph_set, gname["-"]))
     axis = (hyphen[1] + hyphen[3]) / 2
@@ -556,25 +580,7 @@ def add_ligatures(font, kinds, relation=None, extra_fea=""):
         ops += bar(shaft_end(less, y0, y1, False), W3 - (CELL - equal[2]), (y0 + y1) / 2)
     shapes["less_equal_equal"] = (3, ops)
 
-    # >>=  =<<  : the two chevrons nested close, then = , the group centred in its cells
-    nest = stroke * 2.4
-    group_gap = stroke * 1.4
-    for name, chev, eq_first in (("greater_greater_equal", greater, False), ("equal_less_less", less, True)):
-        pair = chev + transformed(chev, 1.0, nest)
-        pb = bounds(pair)
-        pw, ew = pb[2] - pb[0], equal[2] - equal[0]
-        x0 = (W3 - (pw + group_gap + ew)) / 2
-        if eq_first:
-            ops = transformed(equal_ops, 1.0, x0 - equal[0]) + transformed(pair, 1.0, x0 + ew + group_gap - pb[0])
-        else:
-            ops = transformed(pair, 1.0, x0 - pb[0]) + transformed(equal_ops, 1.0, x0 + pw + group_gap - equal[0])
-        shapes[name] = (3, ops)
-
-    # <>  : the chevrons' open ends meet, a diamond
     lb, gb = bounds(less), bounds(greater)
-    meet = stroke * 0.8
-    shapes["less_greater"] = (2, transformed(less, 1.0, W2 / 2 + meet / 2 - lb[2])
-                              + transformed(greater, 1.0, W2 / 2 - meet / 2 - gb[0]))
 
     # |>  <|  : the open end closed by the font's own | , a triangle
     pipe = record(glyph_set, gname["|"])
@@ -656,6 +662,31 @@ def add_ligatures(font, kinds, relation=None, extra_fea=""):
     shapes["backslash_slash"] = (2, transformed(bsl, 1.0, W2 / 2 + touch / 2 - bb[2])
                                  + transformed(sl, 1.0, W2 / 2 - touch / 2 - sb[0]))
 
+    # ...  : the font's own period raised to the middle of the operators, one per cell
+    period = record(glyph_set, gname["."])
+    pb = bounds(period)
+    mid = transformed(period, 1.0, 0.0, 1.0, axis - (pb[1] + pb[3]) / 2)
+    shapes["period_period_period"] = (3, [op for i in range(3) for op in transformed(mid, 1.0, i * CELL)])
+
+    # :=  : the colon's dots at the heights of the = bars, the pair centred in two cells
+    colon = contours(record(glyph_set, gname[":"]))
+    colon.sort(key=lambda c: bounds(c)[1])
+    bar_mid = [equal[1] + eq_stroke / 2, equal[3] - eq_stroke / 2]
+    dots = []
+    for c, y in zip(colon, bar_mid):
+        cb = bounds(c)
+        dots += transformed(c, 1.0, 0.0, 1.0, y - (cb[1] + cb[3]) / 2)
+    db = bounds(dots)
+    gap = stroke * 1.2
+    width = (db[2] - db[0]) + gap + (equal[2] - equal[0])
+    x0 = (W2 - width) / 2
+    shapes["colon_equal"] = (2, transformed(dots, 1.0, x0 - db[0])
+                             + transformed(equal_ops, 1.0, x0 + (db[2] - db[0]) + gap - equal[0]))
+
+    # &&  ||  : left empty here, drawn by fill_from_symbols once the symbols exist
+    for name in FROM_SYMBOL:
+        shapes[name] = (2, [])
+
     glyf = font["glyf"]
     hmtx = font["hmtx"]
     order = font.getGlyphOrder()
@@ -675,6 +706,36 @@ def add_ligatures(font, kinds, relation=None, extra_fea=""):
 
     install_calt(font, gname, set(shapes), extra_fea)
     return new
+
+
+def fill_from_symbols(font, weight, glyph_of=to_glyph, widen=1.5):
+    """Draws the ligatures in FROM_SYMBOL: the font's own symbol widened by `widen`,
+    its stroke given back with weight(ops, dx, dy), centred in the two cells."""
+    glyph_set = font.getGlyphSet()
+    cmap = font.getBestCmap()
+    stroke = bounds(record(glyph_set, cmap[ord("-")]))
+    stroke = stroke[3] - stroke[1]
+    for name, cp in FROM_SYMBOL.items():
+        lig = f"{name}.liga"
+        if lig not in font["glyf"] or cp not in cmap:
+            continue
+        ops = record(glyph_set, cmap[cp])
+        b = bounds(ops)
+        out = transformed(ops, widen, 0.0)
+        out = weight(out, stroke * (1 - widen) * 0.5, 0)
+        ob = bounds(out)
+        out = transformed(out, 1.0, CELL - (ob[0] + ob[2]) / 2, 1.0, 0.0)
+        font["glyf"][lig] = glyph_of(transformed(out, 1.0, -CELL))
+
+
+def contours(ops):
+    """The pen ops split into one list per contour."""
+    out = []
+    for op, args in ops:
+        if op == "moveTo" or not out:
+            out.append([])
+        out[-1].append((op, args))
+    return out
 
 
 def circle(center, radius, steps=24):
@@ -848,8 +909,9 @@ def slash_of(font, glyph_set):
 
 
 def install_calt(font, gname, built, extra_fea=""):
-    ops_class = " ".join(gname[c] for c in OPERATOR_CHARS)
-    lines = [f"@OPS = [{ops_class}];"]
+    def cls(chars):
+        return "[" + " ".join(sorted({gname[c] for c in chars})) + "]"
+    lines = [f"@OPS = {cls(OPERATOR_CHARS)};"]
     cmap = font.getBestCmap()
     word = sorted({cmap[ord(c)] for c in
                    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_" if ord(c) in cmap})
@@ -860,8 +922,9 @@ def install_calt(font, gname, built, extra_fea=""):
         sp = [f"{name}.spacer{i}" for i in range(len(chars) - 1)]
         seq = " ".join(g[1:])
         lines.append(f"lookup {name} {{")
-        lines.append(f"    ignore sub @OPS {g[0]}' {seq};")
-        lines.append(f"    ignore sub {g[0]}' {seq} @OPS;")
+        guard = cls(GUARD_CHARS[name]) if name in GUARD_CHARS else "@OPS"
+        lines.append(f"    ignore sub {guard} {g[0]}' {seq};")
+        lines.append(f"    ignore sub {g[0]}' {seq} {guard};")
         if name in WORD_GUARDED:
             lines.append(f"    ignore sub @WORD {g[0]}' {seq};")
             lines.append(f"    ignore sub {g[0]}' {seq} @WORD;")
@@ -873,11 +936,25 @@ def install_calt(font, gname, built, extra_fea=""):
             lines.append(f"    sub {before} {g[i]}' {after} by {target};".replace("  ", " "))
         lines.append(f"    sub {g[0]}' {seq} by {sp[0]};")
         lines.append(f"}} {name};")
-    lines.append("feature calt {")
-    for name, _ in ligatures:
-        lines.append(f"    lookup {name};")
-    lines.append("} calt;")
-    fea = "\n".join(lines) + "\n" + extra_fea
+    for tag, pairs in sorted(ALTERNATES.items()):
+        lines.append(f"lookup alt_{tag} {{")
+        for glyph, alt in pairs:
+            lines.append(f"    sub {glyph} by {alt};")
+        lines.append(f"}} alt_{tag};")
+    tags = ["calt"] + sorted({STYLISTIC[n] for n, _ in ligatures if n in STYLISTIC} | set(ALTERNATES))
+    for tag in tags:
+        lines.append(f"feature {tag} {{")
+        if tag in FEATURE_NAMES:
+            lines.append(f'    featureNames {{ name "{FEATURE_NAMES[tag]}"; }};')
+        for name, _ in ligatures:
+            if STYLISTIC.get(name, "calt") == tag:
+                lines.append(f"    lookup {name};")
+        if tag in ALTERNATES:
+            lines.append(f"    lookup alt_{tag};")
+        lines.append(f"}} {tag};")
+    # extra_fea (the Hangul composition in ccmp) goes first: lookups run in the order
+    # they are listed, and the alternates must see the syllables already composed
+    fea = extra_fea + "\n" + "\n".join(lines) + "\n"
 
     # feaLib writes a whole GSUB table. Build it on the side, then move its lookups
     # into the font's own GSUB and point every `calt` record at them.
@@ -898,11 +975,16 @@ def install_calt(font, gname, built, extra_fea=""):
             shift_lookup_refs(st, offset)
         table.LookupList.Lookup.append(lookup)
     table.LookupList.LookupCount = len(table.LookupList.Lookup)
-    calt_idx = [offset + i for i in built.FeatureList.FeatureRecord[0].Feature.LookupListIndex]
-    for fr in table.FeatureList.FeatureRecord:
-        if fr.FeatureTag == "calt":
-            fr.Feature.LookupListIndex = list(calt_idx)
-            fr.Feature.LookupCount = len(calt_idx)
+    for new in built.FeatureList.FeatureRecord:
+        idx = [offset + i for i in new.Feature.LookupListIndex]
+        found = False
+        for fr in table.FeatureList.FeatureRecord:
+            if fr.FeatureTag == new.FeatureTag:
+                fr.Feature.LookupListIndex = list(idx)
+                fr.Feature.LookupCount = len(idx)
+                found = True
+        if not found:
+            raise NotImplementedError(f"the font has no {new.FeatureTag} feature to point at")
 
 
 def shift_lookup_refs(obj, offset, seen=None):
@@ -935,7 +1017,7 @@ def finish_tables(font):
             del font[tag]
 
 
-VERSION = "1.401"   # this font's own version, written over the original's
+VERSION = "1.500"   # this font's own version, written over the original's
 
 
 def rename(font):

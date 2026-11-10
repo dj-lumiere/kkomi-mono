@@ -445,7 +445,10 @@ def main():
         # ligature reaches back over the cells before it, a combining mark sits over the
         # letter before it, and lines that run on into the next cell (_ ‾ ‗) join up:
         # all of those are drawn past their cell on purpose.
-        own_cell = name in mapped and adv == M.CELL and name not in joining
+        # an alternate letter (0.ss02, a.ss03) is fitted like the letter it stands for
+        base, _, suffix = name.partition(".")
+        letter = name in mapped or (suffix in ("ss02", "ss03") and base in mapped)
+        own_cell = letter and adv == M.CELL and name not in joining
         fitted = fit_cell(ops, y0) if own_cell else ops
         glyf[name] = to_tt_glyph_quadratic(skew(fitted, ANGLE, y0))
         changed[name] = True
