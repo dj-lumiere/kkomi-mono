@@ -119,14 +119,20 @@ def enlarge_hangul(ops, stem):
 JAMO_X = 1.2
 
 
-def place_jamo(ops, adv, box, stem):
+def place_jamo(ops, adv, box, stem, centre=None):
+    """centre, when given: (x, y) to set the outline's middle on (the vowels, which
+    the font draws where they sit in a syllable, not in the middle of their box)."""
     b = M.bounds(ops)
     if b is None:
         return []
     sx, sy = JAMO_X, HANGUL_Y
     cx, cy = adv / 2, (b[1] + b[3]) / 2
     big = M.transformed(ops, sx, box / 2 - sx * cx, sy, cy - sy * cy)
-    return embolden(big, -stem * (sx - 1), -stem * (sy - 1))
+    out = embolden(big, -stem * (sx - 1), -stem * (sy - 1))
+    if centre:
+        ob = M.bounds(out)
+        out = M.transformed(out, 1.0, centre[0] - (ob[0] + ob[2]) / 2, 1.0, centre[1] - (ob[1] + ob[3]) / 2)
+    return out
 
 
 def place(ops, adv, box, stem):
@@ -461,6 +467,11 @@ def main():
     glyph_i, glyph_l = cmap.get(ord("i")), cmap.get(ord("l"))
     hangul = {n for cp, n in cmap.items() if is_hangul(cp)}
     compat_jamo = {n for cp, n in cmap.items() if 0x3131 <= cp <= 0x318E}
+    # the vowels ㅏ..ㅣ and the old ones (ㆇ..ㆎ): centred on the middle of the syllables
+    compat_vowels = {n for cp, n in cmap.items() if 0x314F <= cp <= 0x3163 or 0x3187 <= cp <= 0x318E}
+    ga = cmap.get(0xAC00)
+    gb = M.bounds(enlarge_hangul(M.record(glyph_set, ga), stem)) if ga else (0, 0, 0, 672)
+    syllable_mid = (gb[1] + gb[3]) / 2
     l_pts = M.polygon_points(M.record(glyph_set, cmap[ord("l")]))[0]
     ccw = M.signed_area(l_pts) > 0
     t_bar = bar_thickness(M.record(glyph_set, cmap[ord("t")]))
@@ -491,7 +502,8 @@ def main():
         else:
             box = M.WIDE if kind == "wide" else M.CELL
             if name in compat_jamo:
-                glyphs[name] = to_tt_glyph(place_jamo(ops, adv, box, stem))
+                centre = (box / 2, syllable_mid) if name in compat_vowels else None
+                glyphs[name] = to_tt_glyph(place_jamo(ops, adv, box, stem, centre))
                 hmtx[name] = (box, 0)
                 continue
             if name in hangul:
@@ -539,7 +551,7 @@ def main():
     post.mapping = {}
     post.glyphOrder = order
 
-    jamo, compose_fea = symbols.add_conjoining_jamo(font, to_tt_glyph_quadratic)
+    jamo, compose_fea = symbols.add_conjoining_jamo(font, to_tt_glyph_quadratic, embolden)
     print(f"conjoining jamo: {len(jamo)}")
     ligs = M.add_ligatures(font, kinds, relation=((1.65, 0.72), embolden), extra_fea=compose_fea)
     ligs += jamo
@@ -557,8 +569,9 @@ def main():
 
     # Syllables the font maps but never draws would show as blank space. Unmapping them
     # lets the editor or terminal take them from its fallback font instead.
+    # The fillers U+115F and U+1160 are blank on purpose and stay.
     blank = {cp for cp, n in font.getBestCmap().items()
-             if is_hangul(cp) and font["glyf"][n].numberOfContours == 0}
+             if is_hangul(cp) and cp not in (0x115F, 0x1160) and font["glyf"][n].numberOfContours == 0}
     for table in font["cmap"].tables:
         if table.isUnicode():
             for cp in blank:

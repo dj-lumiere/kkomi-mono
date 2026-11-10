@@ -240,7 +240,10 @@ BLOCKS.forEach((b, i) => {
     c.title = `${hex(cp)} ${name}${wide ? " (두 칸)" : ""}`;
     c.dataset.k = `${String.fromCodePoint(cp)} ${hex(cp)} ${name}`.toLowerCase();
     c.innerHTML = `<span class="g"></span><span class="u">${hex(cp).slice(2)}</span>`;
-    c.firstChild.textContent = String.fromCodePoint(cp);
+    // a medial or final jamo has no width of its own: it is shown after the initial
+    // filler (U+115F), in the two cells it belongs to
+    const joins = cp >= 0x1160 && cp <= 0x11FF;
+    c.firstChild.textContent = (joins ? "\u115F" : "") + String.fromCodePoint(cp);
     c.addEventListener("click", () => copy(String.fromCodePoint(cp), hex(cp)));
     g.appendChild(c);
   }

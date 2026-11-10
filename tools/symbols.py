@@ -602,13 +602,30 @@ COMPAT_FINAL = [None, 0x3131, 0x3132, 0x3133, 0x3134, 0x3135, 0x3136, 0x3137, 0x
                 0x3147, 0x3148, 0x314A, 0x314B, 0x314C, 0x314D, 0x314E]
 
 
-def add_conjoining_jamo(font, to_glyph):
+# Where each conjoining jamo sits in its two cells, the same place whatever it is joined
+# with, so jamo drawn one over another where nothing joins them never collide:
+# the initial at the top left, a tall vowel on the right, a flat vowel under the
+# initial, the final along the bottom. (x0, y0, x1, y1), x across the two cells.
+JAMO_SLOT_INITIAL = (70, 500, 540, 790)
+JAMO_SLOT_TALL = (600, 290, 930, 790)
+JAMO_SLOT_FLAT = (70, 290, 540, 470)
+JAMO_SLOT_FINAL = (70, -110, 930, 240)
+TALL_VOWELS = {0, 1, 2, 3, 4, 5, 6, 7, 20}           # ㅏ ㅐ ㅑ ㅒ ㅓ ㅔ ㅕ ㅖ ㅣ
+FLAT_VOWELS = {8, 12, 13, 17, 18}                    # ㅗ ㅛ ㅜ ㅠ ㅡ
+MIXED_VOWELS = {9: (8, 0), 10: (8, 1), 11: (8, 20),  # ㅘ ㅙ ㅚ
+                14: (13, 4), 15: (13, 5), 16: (13, 20), 19: (18, 20)}   # ㅝ ㅞ ㅟ ㅢ
+
+
+def add_conjoining_jamo(font, to_glyph, weight):
     """Modern conjoining jamo (U+1100..), as Hangul written in decomposed form arrives
-    (file names saved on macOS, for one). Each jamo looks like its compatibility jamo.
-    An initial takes two cells; a vowel or final takes none, as terminals count them,
-    and is drawn over the cells before it. Returns the feature code that joins an
-    initial, a vowel and an optional final into the drawn syllable, in ccmp, which stays
-    on even with ligatures turned off."""
+    (file names saved on macOS, for one). Each is its compatibility jamo made smaller
+    and set in its own fixed place in the two cells (the JAMO_SLOT_ boxes), so an initial,
+    a vowel and a final drawn one over another where nothing joins them still read as
+    one syllable, like a syllable of the non-square kind. An initial takes two cells; a
+    vowel or final takes none, as terminals count them, and is drawn over the cells
+    before it. The fillers U+115F (an initial, two cells) and U+1160 (a vowel, none) are
+    blank. Returns the feature code that joins an initial, a vowel and an optional final
+    into the drawn syllable, in ccmp, which stays on even with ligatures turned off."""
     cmap = font.getBestCmap()
     gs = font.getGlyphSet()
     glyf, hmtx = font["glyf"], font["hmtx"]
@@ -620,14 +637,52 @@ def add_conjoining_jamo(font, to_glyph):
         names[0x1161 + v] = (0x314F + v, 0, -wide)
     for f in range(1, 28):
         names[0x11A7 + f] = (COMPAT_FINAL[f], 0, -wide)
+    hy = M.bounds(M.record(gs, cmap[ord("-")]))
+    stroke = hy[3] - hy[1]
+
+    def fit(compat, slot):
+        """The compatibility jamo scaled to fit the slot (its proportions kept), its stroke
+        given back to the weight of the syllables, centred in the slot."""
+        ops = M.record(gs, cmap[compat])
+        b = M.bounds(ops)
+        k = min((slot[2] - slot[0]) / (b[2] - b[0]), (slot[3] - slot[1]) / (b[3] - b[1]))
+        out = weight(M.transformed(ops, k, 0.0, k, 0.0), stroke * (1 - k), stroke * (1 - k))
+        ob = M.bounds(out)
+        return M.transformed(out, 1.0, (slot[0] + slot[2]) / 2 - (ob[0] + ob[2]) / 2,
+                             1.0, (slot[1] + slot[3]) / 2 - (ob[1] + ob[3]) / 2)
+
+    def drawn(cp):
+        if cp <= 0x1112:
+            return fit(COMPAT_INITIAL[cp - 0x1100], JAMO_SLOT_INITIAL)
+        if cp <= 0x1175:
+            v = cp - 0x1161
+            if v in TALL_VOWELS:
+                return fit(0x314F + v, JAMO_SLOT_TALL)
+            if v in FLAT_VOWELS:
+                return fit(0x314F + v, JAMO_SLOT_FLAT)
+            flat, tall = MIXED_VOWELS[v]
+            return fit(0x314F + flat, JAMO_SLOT_FLAT) + fit(0x314F + tall, JAMO_SLOT_TALL)
+        return fit(COMPAT_FINAL[cp - 0x11A7], JAMO_SLOT_FINAL)
+
     order = font.getGlyphOrder()
     new = []
     for cp, (compat, adv, dx) in names.items():
         if cp in cmap or compat not in cmap:
             continue
         name = f"uni{cp:04X}"
-        ops = M.record(gs, cmap[compat])
+        ops = drawn(cp)
         glyf[name] = to_glyph(M.transformed(ops, 1.0, dx) if dx else ops)
+        hmtx[name] = (adv, 0)
+        new.append(name)
+        for table in font["cmap"].tables:
+            if table.isUnicode():
+                table.cmap[cp] = name
+    from fontTools.pens.ttGlyphPen import TTGlyphPen
+    for cp, adv in ((0x115F, wide), (0x1160, 0)):
+        if cp in cmap:
+            continue
+        name = f"uni{cp:04X}"
+        glyf[name] = TTGlyphPen(None).glyph()
         hmtx[name] = (adv, 0)
         new.append(name)
         for table in font["cmap"].tables:
@@ -646,8 +701,63 @@ def add_conjoining_jamo(font, to_glyph):
         seq = [cmap.get(0x1100 + i), cmap.get(0x1161 + v)] + ([cmap.get(0x11A7 + f)] if f else [])
         if all(seq):
             rules.append(f"    sub {' '.join(seq)} by {cmap[cp]};")
-    fea = "lookup hangul_compose {\n" + "\n".join(rules) + "\n} hangul_compose;\n" \
-          "feature ccmp {\n    lookup hangul_compose;\n} ccmp;\n"
+    # A vowel or final with no initial before it to sit on (after a letter, a digit, a
+    # space) would be drawn over the two cells before it, on someone else's glyph. Where
+    # text is shaped it is swapped for a version that stands on its own, two cells wide,
+    # drawn like its compatibility jamo. A vowel after an initial, and a final after an
+    # initial (with or without a vowel) or after a syllable with no final, still join.
+    alone = {}
+    for cp, compat in [(0x1100 + i, COMPAT_INITIAL[i]) for i in range(19)] + \
+                      [(0x1161 + v, 0x314F + v) for v in range(21)] + \
+                      [(0x11A7 + f, COMPAT_FINAL[f]) for f in range(1, 28)]:
+        if cp in cmap and compat in cmap:
+            name = cmap[cp] + ".alone"
+            glyf[name] = glyf[cmap[compat]]
+            hmtx[name] = (wide, 0)
+            alone[cmap[cp]] = name
+    font.setGlyphOrder(font.getGlyphOrder() + [n for n in alone.values() if n not in font.getGlyphOrder()])
+    glyf.glyphOrder = font.getGlyphOrder()
+
+    initials = [cmap[c] for c in list(range(0x1100, 0x1113)) + [0x115F] if c in cmap]
+    # an initial with nothing after it stands alone too, full size in its two cells. An
+    # initial with a final straight after it (ᄀᆲ, or ᄀ with the vowel filler) keeps its
+    # place with the final under it, in the same two cells: a terminal gives the pair
+    # two cells, and anything drawn wider would be cut off there.
+    lone_initials = [cmap[c] for c in range(0x1100, 0x1113) if c in cmap and cmap[c] in alone]
+    vowel_or_filler = [cmap[c] for c in range(0x1160, 0x1176) if c in cmap]
+    vowels = [cmap[c] for c in range(0x1161, 0x1176) if c in cmap and cmap[c] in alone]
+    finals = [cmap[c] for c in range(0x11A8, 0x11C3) if c in cmap and cmap[c] in alone]
+    open_syllables = [cmap[0xAC00 + i * 588 + v * 28] for i in range(19) for v in range(21)
+                      if 0xAC00 + i * 588 + v * 28 in cmap]
+    fea_alone = ""
+    if vowels and finals and initials:
+        fea_alone = (
+            "@JAMO_L = [" + " ".join(initials) + "];\n"
+            "@JAMO_V = [" + " ".join(vowels) + "];\n"
+            "@JAMO_V_ALONE = [" + " ".join(alone[g] for g in vowels) + "];\n"
+            "@JAMO_T = [" + " ".join(finals) + "];\n"
+            "@JAMO_T_ALONE = [" + " ".join(alone[g] for g in finals) + "];\n"
+            "@SYLLABLE_LV = [" + " ".join(open_syllables) + "];\n"
+            "@JAMO_L1 = [" + " ".join(lone_initials) + "];\n"
+            "@JAMO_L1_ALONE = [" + " ".join(alone[g] for g in lone_initials) + "];\n"
+            "@JAMO_V_ANY = [" + " ".join(vowel_or_filler) + "];\n"
+            "lookup jamo_l_alone {\n    sub @JAMO_L1 by @JAMO_L1_ALONE;\n} jamo_l_alone;\n"
+            "lookup jamo_v_alone {\n    sub @JAMO_V by @JAMO_V_ALONE;\n} jamo_v_alone;\n"
+            "lookup jamo_t_alone {\n    sub @JAMO_T by @JAMO_T_ALONE;\n} jamo_t_alone;\n"
+            "lookup hangul_alone {\n"
+            "    ignore sub @JAMO_L @JAMO_V';\n"
+            "    ignore sub @JAMO_L @JAMO_V_ANY @JAMO_T';\n"
+            "    ignore sub @JAMO_L @JAMO_T';\n"
+            "    ignore sub @SYLLABLE_LV @JAMO_T';\n"
+            "    ignore sub @JAMO_L1' @JAMO_V_ANY;\n"
+            "    ignore sub @JAMO_L1' @JAMO_T;\n"
+            "    sub @JAMO_L1' lookup jamo_l_alone;\n"
+            "    sub @JAMO_V' lookup jamo_v_alone;\n"
+            "    sub @JAMO_T' lookup jamo_t_alone;\n"
+            "} hangul_alone;\n")
+    fea = fea_alone + "lookup hangul_compose {\n" + "\n".join(rules) + "\n} hangul_compose;\n" \
+        "feature ccmp {\n    lookup hangul_compose;\n" + \
+        ("    lookup hangul_alone;\n" if fea_alone else "") + "} ccmp;\n"
     return new, fea
 
 
