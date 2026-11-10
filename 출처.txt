@@ -5,7 +5,8 @@ KNPS Kkomi Mono
 
 원저작물: 국립공원 꼬미체 (KNPS Kkomi)
 저작권자: 국립공원공단 (Korea National Park Service), http://www.knps.or.kr
-이용 조건: 공공누리 출처표시 조건에 따라 이용합니다.
+이용 조건: 공공누리 제1유형(출처표시) 조건에 따라 이용합니다.
+공공누리 안내: https://www.kogl.or.kr/recommend/recommendDivView.do?recommendIdx=41248&division=font
 
 바꾼 내용:
 - 라틴 문자와 기호를 한 칸(500), 한글을 두 칸(1000)으로 맞췄습니다.

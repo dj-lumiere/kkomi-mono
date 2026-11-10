@@ -4,6 +4,13 @@
 
 - 라틴 문자와 기호는 한 칸(500), 한글은 두 칸(1000)입니다 (UPM 1000).
 - Regular, Italic, Bold, Bold Italic 네 벌이 있습니다.
+- [웹에서 미리보기](https://dj-lumiere.github.io/kkomi-mono/) · [내려받기](https://github.com/dj-lumiere/kkomi-mono/releases/latest)
+
+![코드 예시: 리거처, 한글 주석, 이탤릭 키워드](images/code.png)
+
+![헷갈리기 쉬운 글자, 리거처, 한글, 네 벌](images/features.png)
+
+![터미널: Powerline, 트리, 박스 선, 블록, 점자](images/terminal.png)
 
 ## 설치
 
@@ -91,5 +98,5 @@ woff2는 TTF를 다 만든 뒤 fontTools로 바꿉니다(`TTFont(path).flavor = 
 
 ## 라이선스와 출처
 
-- **폰트** (`fonts/`, `base/`, `source/`): 원저작물은 국립공원공단의 국립공원 꼬미체(KNPS Kkomi)입니다(http://www.knps.or.kr). 공공누리 출처표시 조건에 따라 이용하며, 이 폰트를 쓰거나 다시 배포할 때도 같은 출처를 밝혀야 합니다. 바꾼 내용은 `출처.txt`에 정리되어 있습니다.
+- **폰트** (`fonts/`, `base/`, `source/`): 원저작물은 국립공원공단의 국립공원 꼬미체(KNPS Kkomi)입니다(http://www.knps.or.kr). [공공누리 제1유형(출처표시)](https://www.kogl.or.kr/recommend/recommendDivView.do?recommendIdx=41248&division=font) 조건에 따라 이용하며, 이 폰트를 쓰거나 다시 배포할 때도 같은 출처를 밝혀야 합니다. 바꾼 내용은 `출처.txt`에 정리되어 있습니다.
 - **빌드 스크립트** (`tools/`): MIT 라이선스입니다(`tools/LICENSE`).

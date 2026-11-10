@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KNPS Kkomi Mono</title>
+<meta name="description" content="국립공원 꼬미체를 고정폭 코딩 폰트로 바꾼 KNPS Kkomi Mono 미리보기">
+<meta property="og:title" content="KNPS Kkomi Mono">
+<meta property="og:description" content="한글 11,172자와 리거처를 갖춘 고정폭 코딩 폰트">
+<meta property="og:image" content="https://dj-lumiere.github.io/kkomi-mono/images/code.png">
+<style>
+/* Layout: one column of specimen panels under a toolbar, all set in the font itself. */
+@font-face { font-family: "KKM"; src: url("fonts/woff2/KNPSKkomiMono-Regular.woff2") format("woff2"); font-style: normal; font-display: swap; }
+@font-face { font-family: "KKM"; src: url("fonts/woff2/KNPSKkomiMono-Italic.woff2") format("woff2"); font-style: italic; font-display: swap; }
+@font-face { font-family: "KKM"; src: url("fonts/woff2/KNPSKkomiMono-Bold.woff2") format("woff2"); font-weight: 700; font-display: swap; }
+@font-face { font-family: "KKM"; src: url("fonts/woff2/KNPSKkomiMono-BoldItalic.woff2") format("woff2"); font-weight: 700; font-style: italic; font-display: swap; }
+.bd .s, .bd table.lig td { font-weight: 700; }
+:root {
+  --bg: #f7f5f1; --panel: #fffdf9; --fg: #2a2522; --muted: #807770; --line: #e6e0d8;
+  --accent: #c27a1a; --kw: #b8411e; --str: #3c7a4d; --com: #8a8079; --grid: rgba(194,122,26,0.16);
+  --mono: "KKM", ui-monospace, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #1b1916; --panel: #23201c; --fg: #ece6de; --muted: #9c938a; --line: #36312b;
+    --accent: #e3a24a; --kw: #ef8a62; --str: #8ccf9d; --com: #968c83; --grid: rgba(227,162,74,0.18);
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #1b1916; --panel: #23201c; --fg: #ece6de; --muted: #9c938a; --line: #36312b;
+  --accent: #e3a24a; --kw: #ef8a62; --str: #8ccf9d; --com: #968c83; --grid: rgba(227,162,74,0.18);
+  color-scheme: dark;
+}
+body { background: var(--bg); color: var(--fg); font-family: var(--mono); }
+.wrap { max-width: 980px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 26px; }
+header h1 { margin: 0; font-size: 44px; font-weight: 400; }
+header p { margin: 6px 0 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
+.bar { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; font-size: 14px; }
+.group { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.group label { color: var(--muted); margin-right: 4px; }
+button.t { font: inherit; font-size: 14px; padding: 5px 10px; border: 1px solid var(--line); background: var(--panel);
+  color: var(--fg); border-radius: 4px; cursor: pointer; }
+button.t[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+button.t:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+input[type="range"] { accent-color: var(--accent); width: 120px; }
+section { display: grid; gap: 8px; min-width: 0; }
+h2 { margin: 0; font-size: 14px; font-weight: 400; color: var(--muted); }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; overflow-x: auto; }
+pre.s, textarea.s { margin: 0; padding: 14px 16px; font-family: var(--mono); font-size: var(--size, 20px); line-height: 1.6;
+  white-space: pre; color: var(--fg); tab-size: 4; }
+textarea.s { width: 100%; box-sizing: border-box; border: 0; background: transparent; resize: vertical; min-height: 6em; display: block; }
+pre.cell { line-height: 1.15; }
+pre.wrapping { white-space: pre-wrap; word-break: break-all; }
+.it .s { font-style: italic; }
+.lig-off .s, .lig-off .on { font-feature-settings: "calt" 0; }
+.grid-on pre.s { background-image: linear-gradient(to right, var(--grid) 1px, transparent 1px);
+  background-size: calc(1em * 500 / 1000) 100%; background-origin: content-box; }
+.kw { color: var(--kw); } .str { color: var(--str); } .com, .kw { font-style: italic; } .com { color: var(--com); }
+table.lig { border-collapse: collapse; font-size: 28px; margin: 8px 16px; }
+table.lig td { padding: 4px 22px 4px 0; }
+td.src { color: var(--muted); font-size: 15px; font-feature-settings: "calt" 0; }
+td.off { color: var(--muted); font-feature-settings: "calt" 0; }
+.it table.lig td { font-style: italic; }
+a { color: var(--accent); }
+footer { color: var(--muted); font-size: 13px; line-height: 1.6; }
+</style>
+</head>
+<body>
+
+<div class="wrap" id="root">
+  <header>
+    <h1>KNPS Kkomi Mono</h1>
+    <p>라틴 한 칸 500, 한글 두 칸 1000 (UPM 1000). Regular, Italic(라틴만 기울임), Bold, Bold Italic 네 벌입니다.</p>
+    <p><a href="https://github.com/dj-lumiere/kkomi-mono/releases/latest">내려받기</a> · <a href="https://github.com/dj-lumiere/kkomi-mono">GitHub</a></p>
+  </header>
+
+  <div class="bar">
+    <div class="group" role="group" aria-label="스타일">
+      <button class="t" id="bReg" aria-pressed="true">Regular</button>
+      <button class="t" id="bIt" aria-pressed="false">Italic</button>
+      <button class="t" id="bBd" aria-pressed="false">Bold</button>
+    </div>
+    <div class="group">
+      <label for="size">크기</label>
+      <input type="range" id="size" min="12" max="40" value="20">
+      <span id="sizeVal">20px</span>
+    </div>
+    <div class="group">
+      <button class="t" id="bLig" aria-pressed="true">리거처</button>
+      <button class="t" id="bGrid" aria-pressed="false">칸 눈금</button>
+    </div>
+  </div>
+
+  <section><h2>코드 (주석과 키워드는 이탤릭)</h2><div class="panel"><pre class="s"><span class="com">// 사용자 목록에서 활성 계정만 골라냅니다</span>
+<span class="kw">type</span> User = { id: number; name: string; active: boolean };
+
+<span class="kw">const</span> findActive = (users: User[]): User[] =&gt;
+  users.filter((u) =&gt; u.active === <span class="kw">true</span> &amp;&amp; u.id !== 0);
+
+<span class="kw">function</span> compare(a: number, b: number): number {
+  <span class="kw">if</span> (a == b) <span class="kw">return</span> 0;          <span class="com">// 같으면 0</span>
+  <span class="kw">return</span> a &lt;= b ? -1 : 1;
+}
+
+<span class="kw">for</span> (<span class="kw">const</span> user <span class="kw">of</span> findActive(users)) {
+  <span class="kw">if</span> (user.name != <span class="str">&quot;&quot;</span> &amp;&amp; user.id &gt;= 1)
+    console.log(<span class="str">`${user.name}님, 안녕하세요! (#${user.id})`</span>);
+}</pre></div></section>
+
+  <section><h2>직접 입력</h2><div class="panel"><textarea class="s" id="try" spellcheck="false" aria-label="직접 입력">routine the_quick_brown_fox_jumps_over_the_lazy_dog()
+    # 다람쥐 헌 쳇바퀴에 타고파
+    return</textarea></div></section>
+
+  <section><h2>리거처 (켬 / 끔)</h2><div class="panel"><table class="lig"><tr><td class="src">-&gt;</td><td class="on">a-&gt;b</td><td class="off">a-&gt;b</td></tr><tr><td class="src">&lt;-</td><td class="on">a&lt;-b</td><td class="off">a&lt;-b</td></tr><tr><td class="src">&lt;-&gt;</td><td class="on">a&lt;-&gt;b</td><td class="off">a&lt;-&gt;b</td></tr><tr><td class="src">=&gt;</td><td class="on">a=&gt;b</td><td class="off">a=&gt;b</td></tr><tr><td class="src">&lt;=&gt;</td><td class="on">a&lt;=&gt;b</td><td class="off">a&lt;=&gt;b</td></tr><tr><td class="src">==</td><td class="on">a==b</td><td class="off">a==b</td></tr><tr><td class="src">===</td><td class="on">a===b</td><td class="off">a===b</td></tr><tr><td class="src">!=</td><td class="on">a!=b</td><td class="off">a!=b</td></tr><tr><td class="src">!==</td><td class="on">a!==b</td><td class="off">a!==b</td></tr><tr><td class="src">&lt;=</td><td class="on">a&lt;=b</td><td class="off">a&lt;=b</td></tr><tr><td class="src">&gt;=</td><td class="on">a&gt;=b</td><td class="off">a&gt;=b</td></tr>
+    <tr><td class="src">안 됨</td><td class="on" colspan="2">&lt;!-- --&gt; ==== &lt;-- &lt;== &gt;&gt;=</td></tr></table></div></section>
+
+  <section><h2>헷갈리기 쉬운 글자</h2><div class="panel"><pre class="s" style="font-size: calc(var(--size, 20px) * 1.8)">0O 1Il| ili ofl
+rn m vv w cl d</pre></div></section>
+
+  <section><h2>한글: 원본에 없던 글자 중 무작위 120자 (자모를 조합해 만든 글자)</h2><div class="panel"><pre class="s wrapping">쁮띓찁풅뇲굖퐩쉢쀪벾퐺풱칀뤒쀁뤦춫궍뇑맕꿫옋껳썋푨쵼킱츐툝랳쮱뒯꽛럙홄뻪쉅텾옄퀻흚쵗쪗켫쀉쥨꺺쐛먯좕땏빬쌛쒂뛚뇃픡픺돾쨖눎콪뤕귲씲킺쿂뙵뀉뀘첱죳쐑휮쁅꽠웫곅댇떜껻봸켶씂싃릆꿣즪읛쭏렏첗퍮쵞딠흒썫턒쁦옉톕쉊왂즖괰읳귱첓랛녻줖폯쪹쪳쐍헄긥놇긕쯴</pre></div></section>
+
+  <section><h2>한글 문장과 열 맞춤</h2><div class="panel"><pre class="s">다람쥐 헌 쳇바퀴에 타고파. 키스의 고유조건은 입술끼리 만나야 하고 특별한 기술은 필요치 않다.
+|가나|abcd|다라|1234|마바|
+|이름  |Name|값    |Value |</pre></div></section>
+
+  <section><h2>자모로 분해된 한글 (macOS 파일 이름): 두 줄이 똑같아 보여야 합니다</h2><div class="panel"><pre class="s">한글 문서.txt 꿻뺣 쀍 앉아서 읽었다
+한글 문서.txt 꿻뺣 쀍 앉아서 읽었다</pre></div></section>
+
+  <section><h2>라틴, 그리스, 키릴</h2><div class="panel"><pre class="s">ÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖ×ØÙÚÛÜÝÞßàáâãäåæçèéêëìíîïðñòóôõö÷øùúûüýþÿ
+ĀāĂăĄąĆćĈĉĊċČčĎďĐđĒēĔĕĖėĘęĚěĜĝĞğĠġĢģĤĥĦħĨĩĪīĬĭĮįİıĲĳĴĵĶķĸĹĺĻļĽľĿ
+ŀŁłŃńŅņŇňŉŊŋŌōŎŏŐőŒœŔŕŖŗŘřŚśŜŝŞşŠšŢţŤťŦŧŨũŪūŬŭŮůŰűŲųŴŵŶŷŸŹźŻżŽžſ
+Ça va? Où est l'hôtel? Ñandú, über, smørrebrød
+Zażółć gęślą jaźń. Příliš žluťoučký kůň úpěl ďábelské ódy.
+ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ
+αβγδεζηθικλμνξοπρςστυφχψω
+Ξεσκεπάζω την ψυχοφθόρα βδελυγμία.
+АБВГДЕЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ
+абвгдежзийклмнопрстуфхцчшщъыьэюя
+Съешь же ещё этих мягких французских булок, да выпей чаю.</pre></div></section>
+
+  <section><h2>기호, 첨자, 한국어 기호, 제어 문자, 전각</h2><div class="panel"><pre class="s">‘’ “” „‚ «» ‹› – — … • · ° ′ ″ ‼ ¦ ¯ µ ± × ÷ ≠ ≤ ≥ ∞ √ ∑ ∫
+← ↑ → ↓ ↔ ⇒ ⇔ ✓ ✔ ✗ ✘ ★ ☆ ● ○ ◆ ◇ € £ ¥ ₩ &#xFFFD; ⏺ ⎿
+x⁰¹²³⁴⁵⁶⁷⁸⁹ x₀₁₂₃₄₅₆₇₈₉ H₂O E=mc² a*b **kw
+「인용」 『책』 〈글〉 《잡지》 【제목】 ※ 〃 ・ ㆍ ～ ㎜ ㎏ ℃
+①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳
+⑴⑵⑶⑷⑸⑹⑺⑻⑼⑽⑾⑿⒀⒁⒂⒃⒄⒅⒆⒇
+㉠㉡㉢㉣㉤㉥㉦ ㈀㈁㈂ ㈜㈝㈞
+␀␁␂␃␄␅␆␇␈␉␊␋␌␍␎␏␐␑␒␓␔␕␖␗␘␙␚␛␜␝␞␟␠␡␢␣␤␥␦
+|ａｂ|ab|가|１２|12|</pre></div></section>
+
+  <section><h2>터미널 기호 (줄 높이를 칸 높이에 맞춤: 위아래가 붙어야 합니다)</h2><div class="panel"><pre class="s cell" style="font-feature-settings: 'calt' 0">┌──┬──┐ ╔══╦══╗ ┏━━┳━━┓ ╭──╮
+│가│ab│ ║가║ab║ ┃가┃ab┃ │가│
+├──┼──┤ ╠══╬══╣ ┣━━╋━━┫ ╰──╯
+│12│나│ ║12║나║ ┃12┃나┃
+└──┴──┘ ╚══╩══╝ ┗━━┻━━┛
+╒══╤══╕ ╓──╥──╖ ┄┄┄┄ ┈┈┈┈
+╘══╧══╛ ╙──╨──╜ ╱╲╱╲ ╳╳
+fonts
+├── kkomi mono
+│   └── KNPSKkomiMono-Regular.ttf
+└── tools
+████████ ▀▀▀▀▀▀▀▀ ▄▄▄▄▄▄▄▄
+████████ ▄▄▄▄▄▄▄▄ ▀▀▀▀▀▀▀▀
+▁▂▃▄▅▆▇█ ░░▒▒▓▓██ ▏▎▍▌▋▊▉█
+[████████░░░░░░░░] 50%
+⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏ ⣀⣤⣶⣿⣿⣶⣤⣀
+  main   12  </pre></div></section>
+
+  <footer>KNPS Kkomi Mono는 국립공원공단의 국립공원 꼬미체를 고정폭으로 바꾼 폰트입니다. 원본은 <a href="https://www.kogl.or.kr/recommend/recommendDivView.do?recommendIdx=41248&amp;division=font">공공누리 제1유형(출처표시)</a>으로 공개되어 있으며, 이 폰트를 쓰거나 다시 배포할 때도 출처를 밝혀야 합니다.</footer>
+</div>
+
+<script>
+const root = document.getElementById("root");
+const press = (id, on) => document.getElementById(id).setAttribute("aria-pressed", String(on));
+function setItalic(on) {
+  root.classList.toggle("it", on); press("bIt", on); press("bReg", !on);
+  try { localStorage.setItem("kkm-italic", on ? "1" : "0"); } catch (e) {}
+}
+document.getElementById("bReg").addEventListener("click", () => setItalic(false));
+document.getElementById("bIt").addEventListener("click", () => setItalic(true));
+try { if (localStorage.getItem("kkm-italic") === "1") setItalic(true); } catch (e) {}
+function setBold(on) {
+  root.classList.toggle("bd", on); press("bBd", on);
+  try { localStorage.setItem("kkm-bold", on ? "1" : "0"); } catch (e) {}
+}
+document.getElementById("bBd").addEventListener("click", e => setBold(e.currentTarget.getAttribute("aria-pressed") !== "true"));
+try { if (localStorage.getItem("kkm-bold") === "1") setBold(true); } catch (e) {}
+const size = document.getElementById("size");
+size.addEventListener("input", () => {
+  document.documentElement.style.setProperty("--size", size.value + "px");
+  document.getElementById("sizeVal").textContent = size.value + "px";
+});
+document.getElementById("bLig").addEventListener("click", e => {
+  const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+  press("bLig", on); root.classList.toggle("lig-off", !on);
+});
+document.getElementById("bGrid").addEventListener("click", e => {
+  const on = e.currentTarget.getAttribute("aria-pressed") !== "true";
+  press("bGrid", on); root.classList.toggle("grid-on", on);
+});
+</script>
+</body>
+</html>
