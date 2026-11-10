@@ -427,9 +427,27 @@ def latin_ext_a(font, gs, cmap, c, weight, made):
         upper = chr(base).isupper()
         k = 0.75 if upper else 0.85
         if mark == 0x328:
-            # under the right foot of the letter
-            dx = bb[2] - 40 - k * (ab[0] + ab[2]) / 2
-            dy = bb[1] + 20 - k * ab[3]
+            # the ogonek, one stroke of the round pen: from the bottom of the letter down
+            # and to the left, curling back to the right. It starts on the lowest point of
+            # U, which has no foot, and on the right foot of the others (u's right stem).
+            pts = [p for q in M.polygon_points(M.flattened(base_ops)) for p in q]
+            if chr(base) == "U":
+                ax = min(pts, key=lambda p: p[1])[0] + 30
+            else:
+                ax = bb[2] - 45
+            near = [p[1] for p in pts if abs(p[0] - ax) < 30]
+            floor = min(near) if near else bb[1]
+            w = 58 if upper else 54
+            size = 1.0 if upper else 0.9
+            start = (ax, floor + w / 2)
+            end = (ax + 60 * size, floor - 200 * size)
+            hook = pen_stroke(start, [("curve", (ax - 75 * size, floor - 40 * size),
+                                       (ax - 70 * size, floor - 205 * size), end)], w)
+            hb = M.bounds(hook)
+            if hb[2] > M.CELL - 10:
+                hook = M.transformed(hook, 1.0, M.CELL - 10 - hb[2])
+            made[cp] = base_ops + hook
+            continue
         elif chr(base) in "dlLtk" and mark == 0x30C:
             # ď ľ Ľ ť: a small apostrophe-like caron to the right of the ascender
             q = g(0x2019)
@@ -477,11 +495,12 @@ def latin_ext_a(font, gs, cmap, c, weight, made):
         if len(xs) >= 2:
             # the crossbar: the lowest height (above the stem's foot) where f is wider than its stem
             stem_w = xs[1] - xs[0]
-            bar_top = None
+            bar_top = bar_bottom = None
             y = fb[1] + 60
             while y < fb[3]:
                 row = M.crossings(f_ops, y)
                 if row and row[-1] - row[0] > stem_w * 1.8:
+                    bar_bottom = y
                     while y < fb[3]:
                         row = M.crossings(f_ops, y)
                         if not row or row[-1] - row[0] <= stem_w * 1.8:
@@ -490,11 +509,15 @@ def latin_ext_a(font, gs, cmap, c, weight, made):
                         y += 5
                     break
                 y += 5
-            if bar_top:
-                top = M.clip_polygon(f_ops, [(-9999, bar_top), (-9999, 9999), (9999, 9999), (9999, bar_top)])
-                stem = M.clip_polygon(f_ops, [(xs[0] - 2, -9999), (xs[0] - 2, bar_top + 5),
-                                              (xs[1] + 2, bar_top + 5), (xs[1] + 2, -9999)])
-                made[0x17F] = top + stem
+            if bar_top and bar_bottom:
+                # the stem above and below the crossbar, joined through the crossbar's height
+                # by a piece that follows the stem's own edges, so the waist has no step
+                hi, lo = bar_top + 15, bar_bottom - 15
+                top = M.clip_polygon(f_ops, [(-9999, hi), (-9999, 9999), (9999, 9999), (9999, hi)])
+                stem = M.clip_polygon(f_ops, [(-9999, -9999), (-9999, lo), (9999, lo), (9999, -9999)])
+                mid = (xs[0] + xs[1]) / 2
+                join = M.bridge_between(f_ops, f_ops, hi, lo, mid, not M.CLOCKWISE)
+                made[0x17F] = top + stem + join
     if 0x131 not in cmap:                                    # ı dotless i
         cs = M.polygon_points_ops(g(ord("i")))
         dot = max(cs, key=lambda q: M.bounds(q)[1])
@@ -1111,12 +1134,40 @@ UNIT_PARTS = {0x2215: "/"}
 
 def units(gs, cmap, weight, made):
     """㎜ ㎏ ㎡ ...: the letters of the unit, set side by side in two cells. Units
-    of three letters or more are narrowed to fit, and a little shorter."""
+    of three letters or more are narrowed to fit, and a little shorter. A unit with a
+    slash (㎧ m/s, ㎯ rad/s², ㏆ C/kg) is set as a fraction: what is over the slash
+    above a bar, what is under it below."""
     if ord("-") not in cmap:
         return
     hy = M.bounds(M.record(gs, cmap[ord("-")]))
     stroke = hy[3] - hy[1]
+    axis = (hy[1] + hy[3]) / 2
     avail = 2 * M.CELL - 2 * 34
+
+    def gaps_of(chars):
+        # the period of a.m. and the superscripts sit close to what they follow
+        return [10 if ch == "." or nxt in "²³." else 40 for ch, nxt in zip(chars, chars[1:])]
+
+    def line(chars, kx, ky, baseline):
+        """The letters side by side, scaled by kx and ky, centred across the two cells."""
+        glyphs = [M.record(gs, cmap[ord(ch)]) for ch in chars]
+        bs = [M.bounds(g) for g in glyphs]
+        gaps = gaps_of(chars)
+        width = sum(b[2] - b[0] for b in bs) + sum(gaps)
+        out, x = [], M.CELL - kx * width / 2
+        for g, b, gap in zip(glyphs, bs, gaps + [0]):
+            one = M.transformed(g, kx, x - kx * b[0], ky, baseline)
+            if kx < 0.99 or ky < 0.99:
+                one = weight(one, stroke * (1 - kx) * 0.7, stroke * (1 - ky) * 0.7)
+            out += one
+            x += kx * (b[2] - b[0] + gap)
+        return out, kx * width
+
+    def natural_width(chars):
+        bs = [M.bounds(M.record(gs, cmap[ord(ch)])) for ch in chars]
+        return sum(b[2] - b[0] for b in bs) + sum(gaps_of(chars))
+
+    cap = M.bounds(M.record(gs, cmap[ord("H")])) if ord("H") in cmap else (0, 0, 0, 650)
     for cp in range(0x3380, 0x33E0):
         if cp not in cmap:
             continue
@@ -1126,25 +1177,27 @@ def units(gs, cmap, weight, made):
         chars = [UNIT_PARTS.get(int(p, 16), chr(int(p, 16))) for p in parts[1:]]
         if not all(ord(ch) in cmap for ch in chars):
             continue
-        glyphs = [M.record(gs, cmap[ord(ch)]) for ch in chars]
-        bs = [M.bounds(g) for g in glyphs]
-        if any(b is None for b in bs):
+        if any(M.bounds(M.record(gs, cmap[ord(ch)])) is None for ch in chars if ch != " "):
             continue
-        gaps = []
-        for ch, nxt in zip(chars, chars[1:]):
-            # the period of a.m. and the superscripts sit close to what they follow
-            gaps.append(10 if ch == "." or nxt in "²³." else 40)
-        width = sum(b[2] - b[0] for b in bs) + sum(gaps)
+        if "/" in chars:
+            cut = chars.index("/")
+            num, den = chars[:cut], chars[cut + 1:]
+            # each line about half the capital height, narrowed further if it is long
+            k = 0.5
+            rule, gap = stroke * 0.8, stroke * 0.8
+            kx = min(k, avail / max(natural_width(num), natural_width(den)))
+            top_base = axis + rule / 2 + gap                              # numerator baseline
+            bottom_base = axis - rule / 2 - gap - k * cap[3]              # denominator top at the gap
+            n_ops, nw = line(num, kx, k, top_base)
+            d_ops, dw = line(den, kx, k, bottom_base)
+            half = max(nw, dw) / 2 + 30
+            bar = M.rect(M.CELL - half, axis - rule / 2, M.CELL + half, axis + rule / 2)
+            made[cp] = n_ops + bar + d_ops
+            continue
+        width = natural_width(chars)
         kx = min(1.0, avail / width)
         ky = min(1.0, kx * 1.3)
-        out, x = [], M.CELL - kx * width / 2
-        for g, b, gap in zip(glyphs, bs, gaps + [0]):
-            one = M.transformed(g, kx, x - kx * b[0], ky, 0.0)
-            if kx < 0.99 or ky < 0.99:
-                one = weight(one, stroke * (1 - kx) * 0.7, stroke * (1 - ky) * 0.7)
-            out += one
-            x += kx * (b[2] - b[0] + gap)
-        made[cp] = out
+        made[cp], _ = line(chars, kx, ky, 0.0)
 
 
 KANA_SCALE = 0.92
@@ -1209,12 +1262,90 @@ FROM_FONT = [0x2022, 0x2713, 0x2714, 0x2717, 0x2718, 0x2039, 0x203A, 0x201E, 0x2
 POWERLINE = [0xE0A0, 0xE0A1, 0xE0A2, 0xE0B0, 0xE0B1, 0xE0B2, 0xE0B3]
 
 
+def pen_stroke(start, segments, width):
+    """The outline of a round pen drawn along a path: start, then ("line", p) or
+    ("curve", c1, c2, p) segments. skia strokes the curves themselves, so the outline
+    is made of curves too, with round ends and round turns."""
+    import pathops
+    from fontTools.pens.recordingPen import RecordingPen
+    centre = pathops.Path()
+    pen = centre.getPen()
+    pen.moveTo(start)
+    for seg in segments:
+        if seg[0] == "line":
+            pen.lineTo(seg[1])
+        else:
+            pen.curveTo(seg[1], seg[2], seg[3])
+    pen.endPath()
+    centre.stroke(width, pathops.LineCap.ROUND_CAP, pathops.LineJoin.ROUND_JOIN, 4)
+    centre.convertConicsToQuads()
+    centre.simplify()
+    rec = RecordingPen()
+    centre.draw(rec)
+    out = rec.value
+    cs = M.polygon_points_ops(out)
+    outer = max(cs, key=lambda q: abs(M.signed_area(M.polygon_points(q)[0])))
+    if (M.signed_area(M.polygon_points(outer)[0]) < 0) != M.CLOCKWISE:
+        from fontTools.pens.reverseContourPen import ReverseContourPen
+        r = RecordingPen()
+        rev = ReverseContourPen(r)
+        for op, args in out:
+            getattr(rev, op)(*args)
+        out = r.value
+    return out
+
+
+def l_halves(top_y, s, inset=0):
+    """ℓ split at its highest point into two strokes. The / half runs from the bottom
+    left, through a crossing near the foot, up the right of the loop to the top. The
+    \\ half is its mirror image, from the top down the left of the loop, through the
+    crossing and out to the bottom right. Returns (bottom left, top, / segments,
+    \\ segments), each segment list for pen_stroke."""
+    w = M.CELL
+    start, end = (s / 2 + inset, s / 2), (w - s / 2 - inset, s / 2)
+    cross = (w / 2, 165)
+    top = (w / 2, top_y)
+    slash = [("curve", (w * 0.2, 75), (w * 0.4, 130), cross),
+             ("curve", (w * 0.66, 215), (w * 0.7, top_y), top)]
+    backslash = [("curve", (w * 0.3, top_y), (w * 0.34, 215), cross),
+                 ("curve", (w * 0.6, 130), (w * 0.8, 75), end)]
+    return start, top, slash, backslash
+
+
+def l_stroke_width(gs, cmap):
+    old = M.record(gs, cmap[ord("l")])
+    lb = M.bounds(old)
+    xs = M.crossings(M.flattened(old), (lb[1] + lb[3]) * 0.6)
+    return (xs[1] - xs[0] if len(xs) >= 2 else 70), lb[3]
+
+
+def regular_l(gs, cmap):
+    """l as one stroke of the round pen: straight down a little left of the middle, then
+    a short tail that curves down and to the right onto the baseline."""
+    s, top_y = l_stroke_width(gs, cmap)
+    x = M.CELL * 0.42
+    foot = s / 2
+
+    def up(y):
+        # the tail's drop, 5% steeper than an even curve from the stem
+        return foot + (y - foot) * 1.05
+
+    return pen_stroke((x, top_y - s / 2), [
+        ("line", (x, up(190))),
+        ("curve", (x, up(110)), (x + 40, up(60)), (x + 170, foot)),
+    ], s)
+
+
 def add_symbols(font, to_glyph, weight):
     """Adds or redraws the symbols. Returns the glyph names it wrote."""
     cell = Cell(font)
     gs = font.getGlyphSet()
     cmap = font.getBestCmap()
     glyf, hmtx = font["glyf"], font["hmtx"]
+    if ord("l") in cmap and 0x2113 in cmap:
+        # l first, so the units drawn below (lm, lx) take the new one
+        glyf[cmap[ord("l")]] = to_glyph(regular_l(gs, cmap))
+        gs = font.getGlyphSet()
     made = {}
     # geometry: drawn even where the font has the code point, so all of it joins up
     for cp in range(0x2500, 0x2580):

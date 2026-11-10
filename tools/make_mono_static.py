@@ -471,11 +471,16 @@ def main():
 
     glyphs, narrow = {}, []
     backslash, slash = cmap.get(0x5C), cmap.get(0x2F)
+    nine, six = cmap.get(ord("9")), cmap.get(ord("6"))
     asterisk = cmap.get(0x2A)
     hb = M.bounds(M.record(glyph_set, cmap[ord("-")]))
     operator_axis = (hb[1] + hb[3]) / 2
     for name in order:
         ops = filled.get(name) or M.record(glyph_set, alias.get(name, name))
+        if name == nine and six:
+            # 9 is the 6 turned half around: its tail curls in, so it is not a q
+            sb = M.bounds(M.record(glyph_set, six))
+            ops = M.transformed(M.record(glyph_set, six), -1.0, sb[0] + sb[2], -1.0, sb[1] + sb[3])
         if name == backslash and slash:
             # the font draws the won sign here: a backslash, the slash flipped
             ops = mirrored(M.record(glyph_set, slash))

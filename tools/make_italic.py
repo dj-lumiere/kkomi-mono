@@ -132,6 +132,22 @@ def f_descender(f_ops, j_ops):
     return path_op(path_op(cut, tail, pathops.PathOp.UNION), join, pathops.PathOp.UNION)
 
 
+def loop_l(l_ops, x_height):
+    """The italic l: the / half of ℓ and its mirror image, one loop that crosses itself
+    near the foot, tails at the bottom left and the bottom right. Drawn upright with
+    the round pen and slanted with the other letters. Its right half is the Regular l."""
+    from symbols import pen_stroke, l_halves
+    lb = M.bounds(l_ops)
+    # the Regular l is already the \\ half: its stroke is the width at its middle
+    xs = M.crossings(M.flattened(l_ops), (lb[1] + lb[3]) * 0.6)
+    s = xs[1] - xs[0] if len(xs) >= 2 else 70
+    start, _, slash, backslash = l_halves(lb[3] - s / 2, s, inset=20)
+    loop = pen_stroke(start, slash + backslash, s)
+    # the slant pushes the foot left by as much as half the x-height leans: move the
+    # letter right by that first, so the left tail stays inside the cell
+    return M.transformed(loop, 1.0, math.tan(math.radians(ANGLE)) * x_height / 2)
+
+
 def c_x(x_ops, c_ops):
     """x as ɔc: the c and its mirror image back to back at the x-height, their backs
     overlapping by about a stroke so they read as one letter."""
@@ -179,6 +195,7 @@ def main():
     for ch in HOOKED:
         changed[cmap[ord(ch)]] = right_stem_hook(M.record(gs, cmap[ord(ch)]), hook, x_height)
     changed[cmap[ord("f")]] = f_descender(M.record(gs, cmap[ord("f")]), M.record(gs, cmap[ord("j")]))
+    changed[cmap[ord("l")]] = loop_l(M.record(gs, cmap[ord("l")]), x_height)
     changed[cmap[ord("x")]] = c_x(M.record(gs, cmap[ord("x")]), M.record(gs, cmap[ord("c")]))
 
     upright = set()

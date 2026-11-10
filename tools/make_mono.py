@@ -737,6 +737,22 @@ def stem_pair(ops, y, near_x):
     return min(pairs, key=lambda p: abs((p[0] + p[1]) / 2 - near_x))
 
 
+def bridge_between(top_ops, bottom_ops, y_hi, y_lo, near_x, ccw):
+    """The piece joining a stem that stops at y_hi (above) to one that starts at y_lo
+    (below), following each stem's own edges a little way into it, so the outline has
+    no step where they meet."""
+    e = 12
+    a, a_in = stem_pair(top_ops, y_hi + e, near_x), stem_pair(top_ops, y_hi, near_x)
+    b, b_in = stem_pair(bottom_ops, y_lo - e, near_x), stem_pair(bottom_ops, y_lo, near_x)
+    if not (a and a_in and b and b_in):
+        return []
+    pts = [(a[0], y_hi + e), (a[1], y_hi + e), (a_in[1], y_hi), (b_in[1], y_lo),
+           (b[1], y_lo - e), (b[0], y_lo - e), (b_in[0], y_lo), (a_in[0], y_hi)]
+    if ccw:
+        pts = pts[::-1]
+    return [("moveTo", (pts[0],))] + [("lineTo", (p,)) for p in pts[1:]] + [("closePath", ())]
+
+
 def bridge(top_ops, bottom_ops, y, span, near_x, ccw):
     """Where a stem from one glyph meets a stem from another at height y: the piece
     between y - span and y + span, running from the lower stem's edges to the upper's,
@@ -919,7 +935,7 @@ def finish_tables(font):
             del font[tag]
 
 
-VERSION = "1.100"   # this font's own version, written over the original's
+VERSION = "1.200"   # this font's own version, written over the original's
 
 
 def rename(font):
