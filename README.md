@@ -98,5 +98,6 @@ woff2는 TTF를 다 만든 뒤 fontTools로 바꿉니다(`TTFont(path).flavor = 
 
 ## 라이선스와 출처
 
-- **폰트** (`fonts/`, `base/`, `source/`): 원저작물은 국립공원공단의 국립공원 꼬미체(KNPS Kkomi)입니다(http://www.knps.or.kr). [공공누리 제1유형(출처표시)](https://www.kogl.or.kr/recommend/recommendDivView.do?recommendIdx=41248&division=font) 조건에 따라 이용하며, 이 폰트를 쓰거나 다시 배포할 때도 같은 출처를 밝혀야 합니다. 바꾼 내용은 `출처.txt`에 정리되어 있습니다.
+- **폰트** (`fonts/`, `base/`, `source/`): 본 저작물은 국립공원공단에서 2021년 작성하여 공공누리 제1유형으로 개방한 국립공원공단 꼬미(작성자: 국립공원공단)를 이용하였으며, 해당 저작물은 국립공원공단, <http://www.knps.or.kr> 에서 무료로 다운받으실 수 있습니다. ([공공누리 안내](https://www.kogl.or.kr/recommend/recommendDivView.do?recommendIdx=41248&division=font))
+  이 폰트를 쓰거나 다시 배포할 때도 이 출처를 함께 밝혀야 합니다. 바꾼 내용은 `출처.txt`에 정리되어 있습니다.
 - **빌드 스크립트** (`tools/`): MIT 라이선스입니다(`tools/LICENSE`).
