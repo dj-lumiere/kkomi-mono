@@ -54,6 +54,10 @@ BELOW = {8, 12, 13, 17, 18}                  # ㅗ ㅛ ㅜ ㅠ ㅡ
 BOTH = {9, 10, 11, 14, 15, 16, 19}           # ㅘ ㅙ ㅚ ㅝ ㅞ ㅟ ㅢ
 
 
+# double finals and their two consonants as single finals: ㄳ ㄵ ㄶ ㄺ ㄻ ㄼ ㄽ ㄾ ㄿ ㅀ ㅄ
+DOUBLE_FINAL = {3: (1, 19), 5: (4, 22), 6: (4, 27), 9: (8, 1), 10: (8, 16), 11: (8, 17),
+                12: (8, 19), 13: (8, 25), 14: (8, 26), 15: (8, 27), 18: (17, 19)}
+
 # double initials and the single one they repeat: ㄲ ㄸ ㅃ ㅆ ㅉ
 DOUBLE_OF = {1: 0, 4: 3, 8: 7, 10: 9, 13: 12}
 
@@ -306,6 +310,18 @@ def fill(glyph_set, cmap, weight):
             return attach(new_upper, donor_f, M.bounds(flatten(h_low)))
         return new_upper + h_low
 
+    # how far the designer sets a syllable with a double final above (or below) the same
+    # syllable with only its first consonant (않 over 안, 굶 under 굴): the median over
+    # the pairs the font draws, for each double final
+    rises = collections.defaultdict(list)
+    for cp in drawn:
+        i, v, f = decompose(cp)
+        for g in DOUBLE_FINAL.get(f, ()):
+            if compose(i, v, g) in drawn:
+                rises[f].append(M.bounds(flatten(drawn[cp]))[3] - M.bounds(flatten(drawn[compose(i, v, g)]))[3])
+                break
+    double_rise = {f: sorted(r)[len(r) // 2] for f, r in rises.items()}
+
     out = {}
     stats = collections.Counter()
     for cp in range(BASE, BASE + 11172):
@@ -317,8 +333,27 @@ def fill(glyph_set, cmap, weight):
             donor_f = final_from(v, f)
             iv = [d for d in by_iv.get((i, v), []) if clean(d)]
             if donor_f and iv:
+                # under a double final the initial and vowel stand where the designer
+                # set them in a syllable they share. Best is one with another double
+                # final on the same first consonant (훑 for 훎): its upper part is taken
+                # when it splits cleanly, and the built one is moved so the tops meet.
+                # Next is the syllable with only the first consonant (훌, else 훔), with
+                # the tops set as far apart as the font sets such pairs (double_rise).
+                sib = [compose(i, v, g) for g, parts_g in DOUBLE_FINAL.items()
+                       if g != f and parts_g[0] == DOUBLE_FINAL.get(f, (None,))[0]
+                       and compose(i, v, g) in drawn]
+                single = [compose(i, v, g) for g in DOUBLE_FINAL.get(f, ()) if compose(i, v, g) in drawn]
+                iv.sort(key=lambda d: (d not in sib, d not in single))
                 upper, low = split(iv[0])
                 built = attach(upper, donor_f, M.bounds(flatten(low)))
+                top = None
+                if sib:
+                    top = M.bounds(flatten(drawn[sib[0]]))[3]
+                elif single:
+                    top = M.bounds(flatten(drawn[single[0]]))[3] + double_rise.get(f, 0.0)
+                if top is not None:
+                    built = shift(built, 0.0, top - M.bounds(flatten(built))[3])
+                    stats["double final set by the designer's own"] += 1
                 stats["upper of same initial+vowel"] += 1
             elif (built := swap_initial(i, v, f)) is not None:
                 stats["initial swapped"] += 1

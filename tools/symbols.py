@@ -1690,6 +1690,218 @@ def redraw_i_l(font, to_glyph):
             glyf[cmap[0x131]] = to_glyph([op for q in cs if q is not dot for op in q])
 
 
+def f_stems(gs, cmap):
+    """f with the stem under its crossbar redrawn as one stroke of the round pen. The
+    font's own stem bends right and back, which reads as a squiggle at small sizes.
+    Returns two f: the stem ending in a short foot to the left (the mirror of t's foot),
+    and the stem running straight down to a round end (ss05). The crossbar and the arch
+    above it stay as they are."""
+    import pathops
+    from make_italic import path_op, box
+    ops = M.record(gs, cmap[ord("f")])
+    flat = M.flattened(ops)
+    fb = M.bounds(flat)
+    low = M.crossings(flat, fb[1] + 80)
+    if len(low) < 2:
+        raise SystemExit("f: no stem found near the baseline")
+    stem_w = low[1] - low[0]
+    # the bar: going up from the foot, the heights where f is much wider than its stem
+    y, bar_lo, bar_hi = fb[1] + 80, None, None
+    while y < fb[3]:
+        row = M.crossings(flat, y)
+        wide = row and row[-1] - row[0] > stem_w * 1.8
+        if wide and bar_lo is None:
+            bar_lo = y
+        elif not wide and bar_lo is not None:
+            bar_hi = y
+            break
+        y += 2
+    if bar_lo is None or bar_hi is None:
+        raise SystemExit("f: no crossbar found")
+    above = M.crossings(flat, bar_hi + 15)
+    if len(above) < 2:
+        raise SystemExit("f: no stem found above the crossbar")
+    w = above[1] - above[0]
+    cx = (above[0] + above[1]) / 2
+    top = path_op(ops, box(-10000, -10000, 10000, bar_lo + 3), pathops.PathOp.DIFFERENCE)
+    # the new stem starts inside the bar, in line with the stem above it, so the joint
+    # is hidden in the bar. It leans 0.5 degrees like the upright strokes of the Hangul.
+    start, foot, x = (cx, (bar_lo + bar_hi) / 2), w / 2, cx - 4
+    footed = pen_stroke(start, [
+        ("line", (x, foot + 90)),
+        ("curve", (x, foot + 30), (x - 26, foot), (x - 91, foot)),
+    ], w)
+    straight = pen_stroke(start, [("line", (x, foot))], w)
+    return (path_op(top, footed, pathops.PathOp.UNION),
+            path_op(top, straight, pathops.PathOp.UNION))
+
+
+def open_tail(gs, cmap, ch, spans, cut, clear, bottom):
+    """y or g with its right stem and the tail under the baseline redrawn as one stroke
+    of the round pen. The font's own tail curls back to the right under the letter and
+    closes into a loop, which fills in at small sizes and makes y and g look alike. The
+    new stroke follows the old stem's lean from its top, keeps that direction into the
+    turn, runs left along the bottom and lifts a little at its end, like the tail of j.
+    spans: [(lo, hi), ...], heights where the stem stands alone (above and below where
+    the bowl meets it), to measure its line and width over its whole length.
+    cut: everything below this height goes. clear: (x, y), everything left of x and
+    below y goes too (g's loop comes back up under its bowl). bottom: the lowest edge."""
+    import statistics
+    import pathops
+    from make_italic import path_op, box
+    ops = M.record(gs, cmap[ord(ch)])
+    flat = M.flattened(ops)
+    fb = M.bounds(flat)
+    ys, xs, ws = [], [], []
+    for y in (y for lo, hi in spans for y in range(lo, hi + 1, 10)):
+        row = M.crossings(flat, y)
+        if len(row) < 2:
+            raise SystemExit(f"{ch}: no right stem at height {y}")
+        ys.append(y)
+        xs.append((row[-2] + row[-1]) / 2)
+        ws.append(row[-1] - row[-2])
+    w = statistics.median(ws)
+    # the stem's centre line, x = a + b * y, fitted by least squares
+    my, mx = statistics.fmean(ys), statistics.fmean(xs)
+    b = sum((y - my) * (x - mx) for y, x in zip(ys, xs)) / sum((y - my) ** 2 for y in ys)
+    a = mx - b * my
+
+    def at(y):
+        return a + b * y
+
+    if clear and at(clear[1]) - w / 2 <= clear[0]:
+        raise SystemExit(f"{ch}: the stem reaches into the area cleared for the tail")
+    # the old stem goes from its centre line rightwards, the bowl's ends stop inside the new
+    # stroke. The old tail goes below cut.
+    right_of_stem = [("moveTo", ((at(-10000), -10000),)), ("lineTo", ((10000, -10000),)),
+                     ("lineTo", ((10000, 10000),)), ("lineTo", ((at(10000), 10000),)), ("closePath", ())]
+    top = path_op(ops, right_of_stem, pathops.PathOp.DIFFERENCE)
+    top = path_op(top, box(-10000, -10000, 10000, cut), pathops.PathOp.DIFFERENCE)
+    if clear:
+        top = path_op(top, box(-10000, -10000, clear[0], clear[1]), pathops.PathOp.DIFFERENCE)
+    low = bottom + w / 2
+    head = fb[3] - w / 2
+    knee = low + 150
+    # the first handle of the turn carries on along the stem, so the stroke bends without a corner
+    reach = 100
+    tail = pen_stroke((at(head), head), [
+        ("line", (at(knee), knee)),
+        ("curve", (at(knee - reach), knee - reach), (at(low) - 50, low), (at(low) - 115, low)),
+        ("curve", (at(low) - 165, low), (at(low) - 200, low + 28), (at(low) - 215, low + 66)),
+    ], w)
+    return path_op(top, tail, pathops.PathOp.UNION)
+
+
+def redraw_y_g(font, to_glyph):
+    """y and g with open tails. Written before the accented letters are built from them."""
+    cmap = font.getBestCmap()
+    gs = font.getGlyphSet()
+    if ord("y") not in cmap or ord("g") not in cmap:
+        raise SystemExit("the font has no y or no g")
+    # both tails reach as deep as y's does now
+    bottom = M.bounds(M.flattened(M.record(gs, cmap[ord("y")])))[1]
+    # heights measured on the finished font, which is drawn M.TALL times taller later
+    def h(y):
+        return round(y / M.TALL)
+
+    new_y = open_tail(gs, cmap, "y", [(h(0), h(160)), (h(280), h(440))], h(-10), None, bottom)
+    new_g = open_tail(gs, cmap, "g", [(h(10), h(90)), (h(270), h(340))], h(-40), (355, h(60)), bottom)
+    font["glyf"][cmap[ord("y")]] = to_glyph(new_y)
+    font["glyf"][cmap[ord("g")]] = to_glyph(new_g)
+
+
+def redraw_digits(font, to_glyph):
+    """6, 9 and 8 told apart from b, g and B at small sizes. 6's stroke above its bowl
+    bends right as it rises, so it no longer stands straight like b's stem. 9 is that 6
+    turned half round. 8 is one closed stroke of the round pen crossing itself at a
+    raised waist (a lemniscate of Gerono with its halves scaled apart), so its upper loop
+    is smaller than its lower one, unlike B.
+    Written before the stretch to the finished height: heights are given as measured
+    on the finished font and divided by M.TALL here."""
+    import pathops
+    from make_italic import path_op, box
+    from fontTools.pens.recordingPen import RecordingPen
+    cmap = font.getBestCmap()
+    for ch in "689":
+        if ord(ch) not in cmap:
+            raise SystemExit(f"the font has no {ch}")
+    gs = font.getGlyphSet()
+    glyf = font["glyf"]
+
+    def h(y):
+        return y / M.TALL
+
+    six = M.record(gs, cmap[ord("6")])
+    flat = M.flattened(six)
+    row = M.crossings(flat, h(250))
+    if len(row) != 4:
+        raise SystemExit("6: its bowl is not where it was measured")
+    w = row[1] - row[0]
+    top = M.bounds(flat)[3] - h(w / 2)
+    # the old stroke above the bowl goes, the bowl stays
+    six = path_op(six, box(-10000, h(330), 140, 10000), pathops.PathOp.DIFFERENCE)
+    six = path_op(six, box(-10000, h(420), 10000, 10000), pathops.PathOp.DIFFERENCE)
+    rise = pen_stroke((88, h(280)), [("curve", (86, h(520)), (170, top), (335, top - h(6)))], w)
+    six = path_op(six, rise, pathops.PathOp.UNION)
+    sb = M.bounds(six)
+    nine = M.transformed(six, -1.0, sb[0] + sb[2], -1.0, sb[1] + sb[3])
+
+    eb = M.bounds(M.flattened(M.record(gs, cmap[ord("8")])))
+    cx, waist = M.CELL / 2, h(395)
+    hi, lo = eb[3] - h(w / 2), eb[1] + h(w / 2)
+    upper_half, lower_half = 135, 170          # half widths of the loops, along the centre line
+    # the centre line as 32 cubic curves through points on the curve (Catmull-Rom), so the
+    # outline has few, long segments: a scaled-down copy (⁸, ⅛) keeps a clean outline
+    n = 32
+    pts = []
+    for i in range(n):
+        t = 2 * math.pi * i / n
+        ct, st = math.cos(t), math.sin(t)
+        up = ct >= 0
+        y = waist + (hi - waist) * ct if up else waist + (waist - lo) * ct
+        x = cx + (upper_half if up else lower_half) * 2 * st * ct
+        pts.append((x, y))
+    path = pathops.Path()
+    pen = path.getPen()
+    pen.moveTo(pts[0])
+    for i in range(n):
+        p0, p1, p2, p3 = pts[i - 1], pts[i], pts[(i + 1) % n], pts[(i + 2) % n]
+        pen.curveTo((p1[0] + (p2[0] - p0[0]) / 6, p1[1] + (p2[1] - p0[1]) / 6),
+                    (p2[0] - (p3[0] - p1[0]) / 6, p2[1] - (p3[1] - p1[1]) / 6), p2)
+    pen.closePath()
+    path.stroke(w, pathops.LineCap.ROUND_CAP, pathops.LineJoin.ROUND_JOIN, 4)
+    path.convertConicsToQuads()
+    path.simplify()
+    rec = RecordingPen()
+    path.draw(rec)
+    eight = path_op(rec.value, [], pathops.PathOp.UNION)
+
+    glyf[cmap[ord("6")]] = to_glyph(six)
+    glyf[cmap[ord("9")]] = to_glyph(nine)
+    glyf[cmap[ord("8")]] = to_glyph(eight)
+
+
+def redraw_f(font, to_glyph):
+    """The new f, and the straight f as f.ss05. Written before anything is built from
+    f (ſ, the italic f, the ss03 copies). Returns the name of the alternate."""
+    cmap = font.getBestCmap()
+    if ord("f") not in cmap:
+        raise SystemExit("the font has no f")
+    name = cmap[ord("f")]
+    footed, straight = f_stems(font.getGlyphSet(), cmap)
+    glyf, hmtx = font["glyf"], font["hmtx"]
+    alt = f"{name}.ss05"
+    glyf[name] = to_glyph(footed)
+    glyf[alt] = to_glyph(straight)
+    hmtx[alt] = hmtx[name]
+    order = font.getGlyphOrder()
+    if alt not in order:
+        font.setGlyphOrder(order + [alt])
+    glyf.glyphOrder = font.getGlyphOrder()
+    M.ALTERNATES["ss05"] = [(name, alt)]
+    return alt
+
+
 def add_symbols(font, to_glyph, weight):
     """Adds or redraws the symbols. Returns the glyph names it wrote."""
     cell = Cell(font)

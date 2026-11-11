@@ -458,7 +458,7 @@ def main():
         # all of those are drawn past their cell on purpose.
         # an alternate letter (0.ss02, a.ss03) is fitted like the letter it stands for
         base, _, suffix = name.partition(".")
-        letter = name in mapped or (suffix in ("ss02", "ss03") and base in mapped)
+        letter = name in mapped or (suffix in ("ss02", "ss03", "ss05") and base in mapped)
         own_cell = letter and adv == M.CELL and name not in joining
         if adv == 2 * M.CELL:
             # a two-cell glyph is always one of its own, kept inside its two cells

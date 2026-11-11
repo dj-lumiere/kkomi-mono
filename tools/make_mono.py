@@ -97,6 +97,7 @@ FEATURE_NAMES = {
     "ss02": "Original 0 i j l",
     "ss03": "Italic letters without cursive forms",
     "ss04": "Visible Hangul fillers",
+    "ss05": "Straight f",
 }
 # Glyphs that must meet the cell edges (box drawing and blocks, braille, Powerline):
 # no stroke is thickened or thinned in them, or they would no longer join up.
@@ -132,7 +133,24 @@ LIGATURE_CHARS = "".join(sorted(set(OPERATOR_CHARS + "".join(c for _, c in LIGAT
 def record(glyph_set, name):
     pen = DecomposingRecordingPen(glyph_set, reverseFlipped=True)
     glyph_set[name].draw(pen)
-    return pen.value
+    return drop_specks(pen.value)
+
+
+def drop_specks(ops, eps=2.0):
+    """Drops segments shorter than eps units: every point of the segment lies that close
+    to where it starts. The source font has some (И has a one-unit step back at each stem
+    end), too small to see, but thickening a stroke pushes such a step out into a chip."""
+    out = []
+    cur = None
+    for op, args in ops:
+        if op == "moveTo":
+            cur = args[0]
+        elif op in ("lineTo", "curveTo", "qCurveTo") and cur is not None and args[-1] is not None:
+            if all(p is None or math.dist(p, cur) < eps for p in args):
+                continue
+            cur = args[-1]
+        out.append((op, args))
+    return out
 
 
 def bounds(ops):
@@ -1024,7 +1042,7 @@ def finish_tables(font):
             del font[tag]
 
 
-VERSION = "1.700"   # this font's own version, written over the original's
+VERSION = "1.800"   # this font's own version, written over the original's
 
 
 def rename(font):

@@ -58,20 +58,40 @@ def embolden(ops, x_strength, y_strength):
             contours.append(cur)
             cur = []
     pts_all = [[pt for _, args in c for pt in args if pt is not None] for c in contours]
+    # which points lie on the outline: the last point of each segment (and the start)
+    on_all = [[i == len(args) - 1 or op == "moveTo" for op, args in c for i, pt in enumerate(args) if pt is not None]
+              for c in contours]
     area = sum(sum(x0 * y1 - x1 * y0 for (x0, y0), (x1, y1) in zip(p, p[1:] + p[:1])) for p in pts_all)
     truetype = area < 0  # clockwise outer contours
     half, yhalf = x_strength / 2, y_strength / 2
     out = []
-    for contour, pts in zip(contours, pts_all):
+    for contour, pts, on in zip(contours, pts_all, on_all):
         n = len(pts)
+        # the shift of a point is capped so it never passes its neighbours. FreeType caps it
+        # by the distance to the next control point, which is often a short handle: the
+        # point then moves less than the outline around it and leaves a notch. The cap here
+        # is the chord to the next point on the outline instead (for an off-curve point,
+        # the chord of its curve).
+        ons = [i for i in range(n) if on[i]] or list(range(n))
+
+        def chord_lim(i):
+            if on[i]:
+                prev_on = max((o for o in ons if o < i), default=ons[-1])
+                next_on = min((o for o in ons if o > i), default=ons[0])
+                return min(math.dist(pts[i], pts[prev_on]) or math.inf, math.dist(pts[i], pts[next_on]) or math.inf)
+            prev_on = max((o for o in ons if o < i), default=ons[-1])
+            next_on = min((o for o in ons if o > i), default=ons[0])
+            return math.dist(pts[prev_on], pts[next_on]) or math.inf
+
         moved = []
         for i, (x, y) in enumerate(pts):
-            # nearest distinct neighbours
+            # nearest neighbours at least a unit away, so a handle that all but sits on
+            # its point does not decide the direction
             j = (i - 1) % n
-            while j != i and pts[j] == pts[i]:
+            while j != i and math.dist(pts[j], pts[i]) < 1.0:
                 j = (j - 1) % n
             k = (i + 1) % n
-            while k != i and pts[k] == pts[i]:
+            while k != i and math.dist(pts[k], pts[i]) < 1.0:
                 k = (k + 1) % n
             if j == i or k == i:
                 moved.append((x + half, y + yhalf))
@@ -92,7 +112,7 @@ def embolden(ops, x_strength, y_strength):
                 q = ox * iy - oy * ix
                 if truetype:
                     q = -q
-                lim = min(l_in, l_out)
+                lim = chord_lim(i)
                 sx = sx * half / d if half * q <= lim * d else sx * lim / q
                 sy = sy * yhalf / d if yhalf * q <= lim * d else sy * lim / q
             moved.append((x + half + sx, y + yhalf + sy))
@@ -379,13 +399,19 @@ def add_accented(font):
             dot_cx = (db[0] + db[2]) / 2
             base_ops = [op for c in contours if c is not dot for op in c]
         acc_ops = M.record(gs, cmap[accent])
+        # ģ takes its comma above, turned: g's tail leaves no room below it
+        turned_comma = mark == 0x327 and chr(base) == "g"
+        if turned_comma:
+            acc_ops = M.transformed(M.record(gs, cmap[ord(",")]), -1.0, 0.0, -1.0, 0.0)
         bb, ab = M.bounds(base_ops), M.bounds(acc_ops)
         upper = chr(base).isupper()
         k = (0.5 if upper else 0.55) if mark == 0x303 else (0.7 if upper else 0.8)
         # over the stem, where the dot was (the i's crossbar reaches out to the left)
         cx = dot_cx if dot_cx is not None else (bb[0] + bb[2]) / 2
         acx = (ab[0] + ab[2]) / 2
-        if mark == 0x327:
+        if turned_comma:
+            k = 0.9
+        if mark == 0x327 and not turned_comma:
             dy = bb[1] + 30 - k * ab[3]
         else:
             dy = bb[3] + 40 - k * ab[1]
@@ -603,6 +629,9 @@ def main():
     jamo, compose_fea = symbols.add_conjoining_jamo(font, to_tt_glyph_quadratic, embolden)
     print(f"conjoining jamo: {len(jamo)}")
     symbols.redraw_i_l(font, to_tt_glyph_quadratic)
+    straight_f = symbols.redraw_f(font, to_tt_glyph_quadratic)
+    symbols.redraw_y_g(font, to_tt_glyph_quadratic)
+    symbols.redraw_digits(font, to_tt_glyph_quadratic)
     accented = add_accented(font)
     print(f"accented letters: {len(accented)}")
     # ss03: the letters the italic draws in cursive, kept as copies of the upright ones
@@ -625,6 +654,7 @@ def main():
         font["glyf"][alt] = copy.deepcopy(font["glyf"][name])
         ligs.append(alt)
     ligs += [alt for _, alt in M.ALTERNATES["ss02"]]
+    ligs.append(straight_f)
     print(f"symbols: {len(drawn_symbols)}")
     ligs += drawn_symbols
     removeOverlaps(font, glyphNames=narrow + ligs, removeHinting=True, ignoreErrors=True)
