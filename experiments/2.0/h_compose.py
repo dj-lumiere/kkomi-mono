@@ -44,6 +44,8 @@ def predict(v, hf):
 # --- template strokes: 히, every stroke on its own
 tpl_st, tpl_m = data[ord("히")]
 tpl_ring = HS.ring_box(tpl_st["ring"])
+RING = M.bounds(H.flatten(tpl_st["ring"][1:]))[1] - tpl_ring[1]     # the ring's stroke, from below
+BAR = 68                                                                # a flat stroke's height
 
 def scaled(cs, src, dst):
     """contours in box src moved and scaled to box dst, strokes kept as thick."""
@@ -68,12 +70,15 @@ def build_h(p, vowel, v):
     if flat and H.vowel_class(v) != 0:
         fb = C.box(flat)
         if v in JOIN:
-            # the ㅗ's tick: the highest point of the flat part
-            pts = [pt for q in flat for poly in M.polygon_points(q) for pt in poly]
-            top = max(pts, key=lambda pt: pt[1])
-            tick_x = top[0]
-            bar_top = max(M.bounds(q)[1] for q in flat if M.bounds(q)[2] - M.bounds(q)[0] > 200) + 40
-            ring_bot = max(ring_bot, bar_top + 60)
+            # the ㅗ's tick: the highest point of the flat part. Its own tick is cut off
+            # at the bar and the ring's stem takes its place.
+            pts = [pt for q in flat for poly in M.polygon_points(M.flattened(q)) for pt in poly]
+            tick_x = max(pts, key=lambda pt: pt[1])[0]
+            bar_bot = min(M.bounds(q)[1] for q in flat if M.bounds(q)[2] - M.bounds(q)[0] > 200)
+            bar_top = bar_bot + BAR
+            cut = M.clip_polygon(H.flatten(flat), [(-300, -400), (-300, bar_top), (1300, bar_top), (1300, -400)])
+            vowel = tall + H.same_way(M.polygon_points_ops(cut), flat)
+            ring_bot = max(ring_bot, bar_top + 45)
         else:
             ring_bot = max(ring_bot, fb[3] + C.GAP_ABOVE)
     # the ring shrinks from below when pushed up, the bar and tick stay
@@ -90,9 +95,9 @@ def build_h(p, vowel, v):
     if tick_x is not None:
         # the stem from the ring down into the ㅗ
         import symbols
-        stem = symbols.pen_stroke((tick_x, ring_bot - 12), [("line", (tick_x, bar_top - 40))], 60)
-        out += H.same_way(M.polygon_points_ops(stem), out)
-    return out
+        stem = symbols.pen_stroke((tick_x, ring_bot + RING / 2 - 5), [("line", (tick_x, bar_bot + BAR / 2))], 60)
+        out += H.same_way(M.polygon_points_ops(stem), tpl_st["bar"])
+    return out, vowel
 
 # --- compose
 out, stats, info, hp = C.compose(gs, cmap, W)
@@ -102,7 +107,8 @@ def cs_of(x):
 def syllable(cp):
     i, v, f = H.decompose(cp); hf = bool(f)
     vowel = cs_of(hp["vowel"](v, hf))
-    up = build_h(predict(v, hf), vowel, v) + vowel
+    h, vowel = build_h(predict(v, hf), vowel, v)
+    up = h + vowel
     if not f:
         return H.flatten(up)
     fp = H.flatten(cs_of(hp["final"](f, v)))
