@@ -242,4 +242,6 @@ def compose(glyph_set, cmap, weight):
                 placed = weight(M.transformed(placed, 1.0, 0.0, ky, pb[3] * (1 - ky)), 0.0, 68 * (1 - ky))
         out[cmap[cp]] = H.flatten(up) + placed
         stats["with a final"] += 1
-    return out, stats, {"V": len(V), "I": len(I), "F": len(F), "trusted": len(parts), "drawn": len(drawn)}
+    helpers = {"initial": initial_part, "vowel": vowel_part, "final": final_part, "fit": fit_initial,
+               "drop": drop, "uppers": uppers}
+    return out, stats, {"V": len(V), "I": len(I), "F": len(F), "trusted": len(parts), "drawn": len(drawn)}, helpers
