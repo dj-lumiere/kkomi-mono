@@ -398,6 +398,9 @@ def add_accented(font):
             db = M.bounds(dot)
             dot_cx = (db[0] + db[2]) / 2
             base_ops = [op for c in contours if c is not dot for op in c]
+            if chr(base) == "i":
+                # under an accent, i's stem runs up to the x-height like ı
+                base_ops = symbols.regular_i(gs, cmap, dotless=True)
         acc_ops = M.record(gs, cmap[accent])
         # ģ takes its comma above, turned: g's tail leaves no room below it
         turned_comma = mark == 0x327 and chr(base) == "g"

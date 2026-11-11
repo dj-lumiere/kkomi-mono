@@ -322,6 +322,18 @@ def fill(glyph_set, cmap, weight):
                 break
     double_rise = {f: sorted(r)[len(r) // 2] for f, r in rises.items()}
 
+    def pressed(i, v, donor_f):
+        """The open syllable pressed into the height the upper parts usually have, with
+        the final set under it."""
+        plain = drawn[compose(i, v, 0)]
+        pb = M.bounds(flatten(plain))
+        ref_upper, ref_low = donor_f
+        rb = M.bounds(flatten(ref_upper))
+        ky = (rb[3] - rb[1]) / (pb[3] - pb[1])
+        squeezed = M.transformed(flatten(plain), 1.0, 0.0, ky, rb[3] - ky * pb[3])
+        squeezed = weight(squeezed, 0.0, 68 * (1 - ky))
+        return attach(M.polygon_points_ops(squeezed), donor_f, M.bounds(flatten(ref_low)))
+
     out = {}
     stats = collections.Counter()
     for cp in range(BASE, BASE + 11172):
@@ -355,20 +367,15 @@ def fill(glyph_set, cmap, weight):
                     built = shift(built, 0.0, top - M.bounds(flatten(built))[3])
                     stats["double final set by the designer's own"] += 1
                 stats["upper of same initial+vowel"] += 1
+            elif i in DOUBLE_OF and donor_f and compose(i, v, 0) in drawn:
+                # a double initial copied twice into a single's box comes out crushed
+                # (뽥 from 봙): the designer's own open syllable (뽜) pressed is better
+                built = pressed(i, v, donor_f)
+                stats["open syllable pressed"] += 1
             elif (built := swap_initial(i, v, f)) is not None:
                 stats["initial swapped"] += 1
             elif donor_f and compose(i, v, 0) in drawn:
-                # press the open syllable into the height the upper parts usually have
-                plain = drawn[compose(i, v, 0)]
-                pb = M.bounds(flatten(plain))
-                ref_upper, ref_low = donor_f
-                rb = M.bounds(flatten(ref_upper))
-                ky = (rb[3] - rb[1]) / (pb[3] - pb[1])
-                pressed = M.transformed(flatten(plain), 1.0, 0.0, ky, rb[3] - ky * pb[3])
-                stroke = 68
-                pressed = weight(pressed, 0.0, stroke * (1 - ky))
-                upper = M.polygon_points_ops(pressed)
-                built = attach(upper, donor_f, M.bounds(flatten(ref_low)))
+                built = pressed(i, v, donor_f)
                 stats["open syllable pressed"] += 1
         else:
             iv = [d for d in by_iv.get((i, v), []) if clean(d)]

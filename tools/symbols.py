@@ -373,7 +373,14 @@ def from_font(cp, c, gs, cmap, weight):
     sub = {0x2080 + n: str(n) for n in range(10)}
     if cp in sup or cp in sub:
         d = g(sup.get(cp) or sub.get(cp))
-        return fit(d, 0.6, c.cx, 600 if cp in sup else -40)
+        out = fit(d, 0.6, c.cx, 600 if cp in sup else -40)
+        # stand on the line the font's own ones stand on (¹ ² ³ ⁴, ₁ ₂ ₃ ₄), so a
+        # number made of drawn and built digits keeps one line
+        own = [0xB9, 0xB2, 0xB3, 0x2074] if cp in sup else [0x2081, 0x2082, 0x2083, 0x2084]
+        bottoms = sorted(M.bounds(g(o))[1] for o in own if o in cmap and o != cp)
+        if bottoms:
+            out = M.transformed(out, 1.0, 0.0, 1.0, bottoms[len(bottoms) // 2] - M.bounds(out)[1])
+        return out
     return None
 
 
@@ -523,9 +530,7 @@ def latin_ext_a(font, gs, cmap, c, weight, made):
                 join = M.bridge_between(f_ops, f_ops, hi, lo, mid, not M.CLOCKWISE)
                 made[0x17F] = top + stem + join
     if 0x131 not in cmap:                                    # ı dotless i
-        cs = M.polygon_points_ops(g(ord("i")))
-        dot = max(cs, key=lambda q: M.bounds(q)[1])
-        made[0x131] = [op for q in cs if q is not dot for op in q]
+        made[0x131] = regular_i(gs, cmap, dotless=True)
 
 
 def flip_v(ops, b):
@@ -1610,7 +1615,7 @@ def regular_l(gs, cmap):
     ], s)
 
 
-def diamond_dot(cx, cy, hw=88, hh=96, soft=26):
+def diamond_dot(cx, cy, hw=88 * 0.95, hh=96 * 0.95, soft=26 * 0.95):
     """The dot of i and j: a diamond with its corners rounded by the round pen."""
     import pathops
     from fontTools.pens.recordingPen import RecordingPen
@@ -1640,15 +1645,21 @@ def diamond_dot(cx, cy, hw=88, hh=96, soft=26):
     return ops
 
 
-def regular_i(gs, cmap):
-    """i as a plain stem of the round pen from the x-height to the baseline, with a
-    diamond for its dot, raised clear of it. The diamond fills the cell a plain stem
-    leaves empty, and tells i from l, 1 and | at small sizes."""
+def regular_i(gs, cmap, dotless=False):
+    """i as a plain stem of the round pen down to the baseline, with a diamond for its
+    dot, raised clear of it. The diamond fills the cell a plain stem leaves empty, and
+    tells i from l, 1 and | at small sizes. The stem starts where j's stem starts, so the
+    two match and i does not run up to meet its dot. ı (dotless) starts at the x-height
+    like the other short letters."""
     s, _ = l_stroke_width(gs, cmap)
-    xh = M.bounds(M.record(gs, cmap[ord("x")]))[3]
+    top = M.bounds(M.record(gs, cmap[ord("x")]))[3]
+    if not dotless and ord("j") in cmap:
+        cs = M.polygon_points_ops(M.record(gs, cmap[ord("j")]))
+        dot = max(cs, key=lambda q: M.bounds(q)[1])
+        top = M.bounds([op for q in cs if q is not dot for op in q])[3]
     x = M.CELL / 2
-    body = round_line((x, xh - s / 2), (x, s / 2), s)
-    return body + diamond_dot(x, dot_height(gs, cmap))
+    body = round_line((x, top - s / 2), (x, s / 2), s)
+    return body if dotless else body + diamond_dot(x, dot_height(gs, cmap))
 
 
 def dot_height(gs, cmap):
@@ -1684,10 +1695,7 @@ def redraw_i_l(font, to_glyph):
         if new_j:
             glyf[cmap[ord("j")]] = to_glyph(new_j)
         if 0x131 in cmap:
-            # ı is the new i without its dot
-            cs = M.polygon_points_ops(new_i)
-            dot = max(cs, key=lambda q: M.bounds(q)[1])
-            glyf[cmap[0x131]] = to_glyph([op for q in cs if q is not dot for op in q])
+            glyf[cmap[0x131]] = to_glyph(regular_i(gs, cmap, dotless=True))
 
 
 def f_stems(gs, cmap):
