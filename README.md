@@ -34,7 +34,7 @@ VS Code 예:
 
 ### 웹에서 쓰기
 
-`fonts/woff2/`에 같은 네 벌의 woff2 파일이 있습니다. 하나에 약 1.9MB입니다.
+`fonts/woff2/`에 같은 네 벌의 woff2 파일이 있습니다. 하나에 약 2.1~2.4MB입니다.
 
 ```css
 @font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; }
@@ -51,7 +51,9 @@ code, pre { font-family: "KNPS Kkomi Mono", monospace; }
 - 넓은 라틴 문자는 가로로 줄이고 세로획 굵기를 보정했습니다.
 - 한글은 두 칸을 채우도록 키우고 획 굵기를 다시 맞췄습니다. `고 두 드`처럼 좁은 글자는 가로로 최대 1.6배까지 늘립니다.
 - 가나는 두 칸에 두되 92%로 줄였습니다. 원래 크기로는 한글 옆에서 더 크고 진해 보입니다.
-- 가나의 네모난 획 끝과 날카로운 꺾임을 둥글게 바꾸고, 획 굵기를 한글에 맞춰 조금 얇게 했습니다. 획 끝은 한글처럼 둥글고, 꺾이는 곳은 획 굵기를 지킨 채 곡선으로 돌아갑니다.
+- 원본의 가나는 한글·라틴과 달리 획 끝이 네모난 고딕입니다. 그 가나의 중심선을 뽑아 꼬미 한글의 펜으로 다시 그렸습니다. 곧은 획은 조금 휘고, 꺾임은 반지름 40으로 둥글고, 획 끝은 둥글고, 갈고리는 없습니다. 획은 표준 필순대로 잇고(わ ね れ る ろ ら ゑ 등), け に は ほ의 왼쪽 세로획은 한글 ㅣ와 같은 모양입니다. 작은 가나는 큰 가나를 줄여 만들고, 원본에 없는 ゕ ゖ도 넣었습니다.
+- 반각 가타카나(U+FF61–FF9F, ｱ ｶﾞ ﾊﾟ ｰ ｡ ｢ ｣ 등)를 넣었습니다. 가타카나의 중심선을 반각 칸 폭으로 좁혀 같은 펜으로 그려서, 획 굵기가 전각 가나와 같습니다.
+- ★ ☆는 반각 칸에 맞는 별을 같은 펜으로 다시 그렸습니다.
 - `*`를 `+ - =`와 같은 높이로 내렸습니다.
 
 **헷갈리기 쉬운 글자**
@@ -123,12 +125,13 @@ VS Code에서는 `"editor.fontLigatures": "'ss01', 'ss03'"`처럼 켤 기능을 
 
 ## 다시 만들기
 
-Python 3과 `fonttools`, `skia-pathops`, `ttfautohint-py`가 필요합니다.
+Python 3과 `fonttools`, `skia-pathops`, `ttfautohint-py`, 가나를 다시 그리는 데 쓰는 `Pillow`, `scipy`, `scikit-image`, `skan`이 필요합니다.
 
 ```sh
-pip install fonttools skia-pathops brotli ttfautohint-py
+pip install fonttools skia-pathops brotli ttfautohint-py pillow scipy scikit-image skan
 cd tools
 python make_mono_static.py ../source/KNPSKkomi.otf ../base/KNPSKkomiMono-Base.ttf "KNPS Kkomi" "KNPS Kkomi Mono"
+python make_kana.py ../source/KNPSKkomi.otf ../base/KNPSKkomiMono-Base.ttf ../base/KNPSKkomiMono-Base.ttf
 python make_italic.py ../base/KNPSKkomiMono-Base.ttf ../base/KNPSKkomiMono-BaseItalic.ttf
 python make_bold.py ../base/KNPSKkomiMono-Base.ttf ../fonts/KNPSKkomiMono-Regular.ttf Regular
 python make_bold.py ../base/KNPSKkomiMono-BaseItalic.ttf ../fonts/KNPSKkomiMono-Italic.ttf Italic

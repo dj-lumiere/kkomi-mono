@@ -1024,7 +1024,7 @@ def finish_tables(font):
             del font[tag]
 
 
-VERSION = "1.620"   # this font's own version, written over the original's
+VERSION = "1.700"   # this font's own version, written over the original's
 
 
 def rename(font):
