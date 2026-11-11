@@ -145,7 +145,7 @@ def put_lines(ops, x, y):
     path.simplify(fix_winding=True)
     rec = RecordingPen(); path.draw(rec)
     global img, dr
-    for poly in M.polygon_points(rec.value):
+    for poly in M.polygon_points(M.flattened(rec.value)):
         if len(poly) < 3: continue
         m = Image.new("L", img.size, 0)
         ImageDraw.Draw(m).polygon([(x + px * k, y + (1000 - py) * k) for px, py in poly], fill=255)

@@ -45,7 +45,7 @@ def ring_box(ring):
     thick = ob[3] - hb[3]
     if hb[1] - ob[1] < 1.6 * thick:
         return ob
-    pts = [p for poly in M.polygon_points(outer) for p in poly if p[1] >= hb[1] - thick]
+    pts = [p for poly in M.polygon_points(M.flattened(outer)) for p in poly if p[1] >= hb[1] - thick]
     xs = [p[0] for p in pts]
     return (min(xs), hb[1] - thick, max(xs), ob[3])
 
