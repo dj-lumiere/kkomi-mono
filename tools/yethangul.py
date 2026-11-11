@@ -68,14 +68,14 @@ def consonant_atoms(key, letters):
             atoms += [part[5:], part[5:]]
         elif part.startswith("KAPYEOUN") and part[8:] in letters:
             atoms.append(("kap", part[8:]))
+        elif part.startswith("CHITUEUM") and part[8:].startswith("SSANG") and part[13:] in letters:
+            atoms += [("chi", part[13:]), ("chi", part[13:])]
+        elif part.startswith("CEONGCHIEUM") and part[11:].startswith("SSANG") and part[16:] in letters:
+            atoms += [("ceong", part[16:]), ("ceong", part[16:])]
         elif part.startswith("CHITUEUM") and part[8:] in letters:
-            atoms.append(part[8:])
+            atoms.append(("chi", part[8:]))
         elif part.startswith("CEONGCHIEUM") and part[11:] in letters:
-            atoms.append(part[11:])
-        elif part.startswith("SSANG") and part[5:].startswith("CHITUEUM"):
-            atoms += [part[13:], part[13:]]
-        elif part.startswith("SSANG") and part[5:].startswith("CEONGCHIEUM"):
-            atoms += [part[16:], part[16:]]
+            atoms.append(("ceong", part[11:]))
         else:
             raise SystemExit(f"old Hangul: no letter for {part} in {key}")
     return atoms
@@ -94,6 +94,28 @@ def vowel_atoms(key):
         else:
             raise SystemExit(f"old Hangul: no vowel letter for {part} in {key}")
     return out
+
+
+# the modern vowels, in jamo order, as letter names
+MODERN_VOWELS = ["A", "AE", "YA", "YAE", "EO", "E", "YEO", "YE", "O", "WA", "WAE", "OE", "YO",
+                 "U", "WEO", "WE", "WI", "YU", "EU", "YI", "I"]
+# the modern vowel whose place an old one takes, by its first flat letter: on its own
+# (ㆍ where ㅡ is), or with upright letters beside it (ᆡ where ㅢ is)
+FLAT_TEMPLATE = {"O": 8, "YO": 12, "U": 13, "YU": 17, "EU": 18, "ARAEA": 18}
+MIXED_TEMPLATE = {"O": 9, "YO": 9, "U": 14, "YU": 14, "EU": 19, "ARAEA": 19}
+
+
+def vowel_template(atoms):
+    """The modern vowel (index) whose place a vowel made of these letters takes."""
+    flats = [a for a in atoms if a in FLAT]
+    talls = [a for a in atoms if a in TALL]
+    if flats and talls:
+        return MIXED_TEMPLATE[flats[0]]
+    if flats:
+        return FLAT_TEMPLATE[flats[0]]
+    if len(talls) == 1:
+        return MODERN_VOWELS.index(talls[0])
+    return MODERN_VOWELS.index("AE")
 
 
 def vowel_class(atoms):
@@ -122,6 +144,8 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
         raise SystemExit(f"old Hangul: too few drawn syllables to learn {missing}")
 
     def shape(atom):
+        if isinstance(atom, tuple) and atom[0] in ("chi", "ceong"):
+            return one_leg_short(M.record(gs, cmap[letters[atom[1]]]), left=atom[0] == "ceong")
         if isinstance(atom, tuple):
             # a letter with a small ㅇ under it
             top = M.record(gs, cmap[letters[atom[1]]])
@@ -132,6 +156,33 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
                                  k, tb[1] - 30 - k * rb[3])
             return top + weight(ring, stroke * (1 - k), stroke * (1 - k))
         return M.record(gs, cmap[letters[atom]])
+
+    def one_leg_short(ops, left):
+        """ㅅ ㅈ ㅊ with one leg drawn up short: the right one for the chitueum letters
+        (ᄼ, its left leg runs long), the left one for the ceongchieum letters (ᄾ). Below
+        the middle height, that side is pressed up toward the middle, easing in across
+        the middle of the letter so the strokes stay joined and their ends round."""
+        b = M.bounds(ops)
+        mid_y = (b[1] + b[3]) / 2
+        cx, w = (b[0] + b[2]) / 2, b[2] - b[0]
+
+        def press(x):
+            t = (x - (cx - 0.12 * w)) / (0.24 * w)
+            t = min(max(t, 0.0), 1.0)
+            if left:
+                t = 1 - t
+            return 1 - 0.4 * t
+
+        out = []
+        for op, args in ops:
+            pts = []
+            for p in args:
+                if p is None or p[1] >= mid_y:
+                    pts.append(p)
+                else:
+                    pts.append((p[0], mid_y - (mid_y - p[1]) * press(p[0])))
+            out.append((op, tuple(pts)))
+        return out
 
     ref_h = M.bounds(shape("KIYEOK"))[3] - M.bounds(shape("KIYEOK"))[1]
 
@@ -184,7 +235,20 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
     def consonant(atoms, box):
         return place(row(atoms), box, ref_consonant)
 
+    def scaled(ops, box, k, kx=None):
+        """ops scaled by k (across by kx, when given, but never past the box's width),
+        stroke given back, centred in box."""
+        b = M.bounds(ops)
+        kx = k if kx is None else kx
+        kx = min(kx, (box[2] - box[0]) / (b[2] - b[0]))
+        out = M.transformed(ops, kx, 0.0, k, 0.0)
+        out = weight(out, stroke * (1 - kx), stroke * (1 - k))
+        ob = M.bounds(out)
+        return M.transformed(out, 1.0, (box[0] + box[2]) / 2 - (ob[0] + ob[2]) / 2,
+                             1.0, (box[1] + box[3]) / 2 - (ob[1] + ob[3]) / 2)
+
     def vowel(atoms, tall_box, flat_box):
+        """In the fixed places (the default forms): fitted to the boxes."""
         talls = [a for a in atoms if a in TALL]
         flats = [a for a in atoms if a in FLAT]
         out = []
@@ -192,6 +256,32 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
             out += place(stack(flats), flat_box, ref_flat)
         if talls:
             out += place(row(talls, gap=0.05), tall_box, ref_tall)
+        return out
+
+    def vowel_at(atoms, f, cls):
+        """Where the designer sets the modern vowel it takes after (vowel_template), at
+        that vowel's scale: flat letters as wide as its flat letter is drawn, upright
+        letters as tall as its upright letter. Falls back to the class boxes."""
+        t = vowel_template(atoms)
+        model = vowel_atoms(MODERN_VOWELS[t])
+        talls = [a for a in atoms if a in TALL]
+        flats = [a for a in atoms if a in FLAT]
+        whole = boxes.get(("v", t, f, "all"))
+        if whole is None:
+            return vowel(atoms, boxes.get(("tall", cls, f)), boxes.get(("flat", cls, f)))
+        flat_box = boxes.get(("v", t, f, "flat"), whole) if talls else whole
+        tall_box = boxes.get(("v", t, f, "tall"), whole) if flats else whole
+        out = []
+        if flats:
+            ref = shape([a for a in model if a in FLAT][0])
+            rb = M.bounds(ref)
+            k = (flat_box[2] - flat_box[0]) / (rb[2] - rb[0])
+            out += scaled(stack(flats), flat_box, k)
+        if talls:
+            ref = shape([a for a in model if a in TALL][0])
+            rb = M.bounds(ref)
+            k = (tall_box[3] - tall_box[1]) / (rb[3] - rb[1])
+            out += scaled(row(talls, gap=0.05), tall_box, k)
         return out
 
     jamo = {}                       # cp -> (role, atoms, vowel class or None)
@@ -234,8 +324,7 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
                     put(f"{name}.L{c}{int(f)}", consonant(atoms, boxes[("initial", c, f)]), wide, 0)
         elif role == "V":
             for f in (False, True):
-                put(f"{name}.V{int(f)}", vowel(atoms, boxes.get(("tall", cls, f)), boxes.get(("flat", cls, f))),
-                    0, -wide)
+                put(f"{name}.V{int(f)}", vowel_at(atoms, f, cls), 0, -wide)
         else:
             for c in range(3):
                 put(f"{name}.T{c}", consonant(atoms, boxes[("final", c)]), 0, -wide)

@@ -84,6 +84,7 @@ def learn_boxes(drawn, split_parts, trusted):
       ("tall", cls, final)      the upright part of the vowel (classes 0 and 2)
       ("flat", cls, final)      the flat part of the vowel (classes 1 and 2)
       ("final", cls)            the final
+      ("v", vowel, final, part) one vowel: part "all", or its "flat" and "tall" parts
     Missing keys mean too few syllables to tell."""
     found = collections.defaultdict(list)
     for cp in drawn:
@@ -107,7 +108,12 @@ def learn_boxes(drawn, split_parts, trusted):
             found[("flat", 2, bool(f))].append(M.bounds(flatten(flat)))
         if f and low:
             found[("final", cls)].append(M.bounds(flatten(low)))
-    return {k: median_box(v) for k, v in found.items() if len(v) >= 5}
+        # and for each vowel on its own: the whole vowel, and its flat and upright parts
+        found[("v", v, bool(f), "all")].append(M.bounds(flatten(vowel)))
+        if tall and flat:
+            found[("v", v, bool(f), "tall")].append(M.bounds(flatten(tall)))
+            found[("v", v, bool(f), "flat")].append(M.bounds(flatten(flat)))
+    return {k: median_box(v) for k, v in found.items() if len(v) >= (3 if k[0] == "v" else 5)}
 
 
 def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
@@ -347,6 +353,21 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
         if trusted(cp) and i not in DOUBLE_OF:
             by_v_f_all[(v, f)].append(cp)
             by_i[i].append(cp)
+    # a drawn syllable whose double initial did split off whole (its box is clear of the
+    # vowel's upright and as wide as a double should be): it lends that box to another
+    # double initial over the same vowel (뽸 in the place of ㄲ in 꽤, see swap_initial)
+    by_v_f_double = collections.defaultdict(list)
+    for cp in drawn:
+        i, v, f = decompose(cp)
+        pr = split_parts.get(cp)
+        if i not in DOUBLE_OF or pr is None or (f and not clean(cp)):
+            continue
+        initial, vowel, _ = pr
+        ib, ub = M.bounds(flatten(initial)), M.bounds(flatten(initial + vowel))
+        stems = [M.bounds(q) for q in vowel if M.bounds(q)[3] - M.bounds(q)[1] > 0.5 * (ub[3] - ub[1])]
+        clear = not stems or ib[2] <= min(b[0] for b in stems) + 20
+        if clear and ib[2] - ib[0] > 0.45 * (ub[2] - ub[0]):
+            by_v_f_double[(v, f)].append(cp)
 
     def aspect(contours):
         b = M.bounds(flatten(contours))
@@ -369,6 +390,13 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
             right = M.transformed(flatten(src_init), 0.8, sb0[0] * 0.2 + w * 0.8 + 20, 1.0, 0.0)
             src_init = M.polygon_points_ops(weight(left + right, 68 * 0.2, 0.0))
         hosts = [cp for cp in by_v_f_all.get((v, f), []) if decompose(cp)[0] != i]
+        double_host = False
+        # only under a vowel both under and beside the initial (ㅙ ㅞ), where a single's
+        # box leaves a double no room. Beside an upright vowel the single's box is
+        # better: another double's box there makes the initial too large (땨 뺴)
+        if i in DOUBLE_OF and vowel_class(v) == 2 and by_v_f_double.get((v, f)):
+            hosts = [cp for cp in by_v_f_double[(v, f)] if decompose(cp)[0] != i] or hosts
+            double_host = hosts is not by_v_f_all.get((v, f)) and decompose(hosts[0])[0] in DOUBLE_OF
         refinal = False
         if not hosts and f:
             # no syllable with this vowel and final: take one with another final and
@@ -383,7 +411,7 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
         h_init, h_vowel, h_low = split_parts[host]
         hb = M.bounds(flatten(h_init))
         sb = M.bounds(flatten(src_init))
-        if i in DOUBLE_OF:
+        if i in DOUBLE_OF and not double_host:
             # a double initial needs more room: grow the box to the left
             grow = (hb[2] - hb[0]) * 0.45
             room = hb[0] - 10
