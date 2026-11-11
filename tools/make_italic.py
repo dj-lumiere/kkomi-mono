@@ -442,7 +442,10 @@ def main():
     # before them slant the same way, to line up with their initial.
     ga = M.bounds(M.record(gs, cmap[0xAC00]))
     wide_y0 = (ga[1] + ga[3]) / 2
-    jamo = {name for cp, name in cmap.items() if 0x1100 <= cp <= 0x11FF}
+    jamo = {name for cp, name in cmap.items()
+            if 0x1100 <= cp <= 0x11FF or 0xA960 <= cp <= 0xA97F or 0xD7B0 <= cp <= 0xD7FF}
+    # and their forms for each place in a syllable (uni1100.L01, uni1161.V1, uni11A8.T2)
+    jamo |= {name for name in font.getGlyphOrder() if name.partition(".")[0] in jamo}
     joining = {cmap[cp] for cp in (0x5F, 0x203E, 0x2017) if cp in cmap}
     mapped = set(cmap.values())
     for name in font.getGlyphOrder():

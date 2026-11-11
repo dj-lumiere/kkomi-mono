@@ -70,13 +70,57 @@ def touches(a, b, slack=25):
     return not (a[2] + slack < b[0] or b[2] + slack < a[0] or a[3] + slack < b[1] or b[3] + slack < a[1])
 
 
-def fill(glyph_set, cmap, weight):
+def median_box(boxes):
+    """The box whose every side is the median of that side over the boxes."""
+    sides = list(zip(*boxes))
+    return tuple(sorted(side)[len(side) // 2] for side in sides)
+
+
+def learn_boxes(drawn, split_parts, trusted):
+    """Where the designer sets the parts of a syllable, as the median box of each over
+    the syllables that split cleanly, keyed by the vowel's class (0 right, 1 below,
+    2 both) and whether there is a final:
+      ("initial", cls, final)   the initial (single initials only)
+      ("tall", cls, final)      the upright part of the vowel (classes 0 and 2)
+      ("flat", cls, final)      the flat part of the vowel (classes 1 and 2)
+      ("final", cls)            the final
+    Missing keys mean too few syllables to tell."""
+    found = collections.defaultdict(list)
+    for cp in drawn:
+        if not trusted(cp):
+            continue
+        i, v, f = decompose(cp)
+        cls = vowel_class(v)
+        initial, vowel, low = split_parts[cp]
+        if i not in DOUBLE_OF:
+            found[("initial", cls, bool(f))].append(M.bounds(flatten(initial)))
+        ub = M.bounds(flatten(initial + vowel))
+        uh = ub[3] - ub[1]
+        tall = [k for k in vowel if M.bounds(k)[3] - M.bounds(k)[1] > 0.5 * uh]
+        flat = [k for k in vowel if not any(k is q for q in tall)]
+        if cls == 0:
+            found[("tall", 0, bool(f))].append(M.bounds(flatten(vowel)))
+        elif cls == 1:
+            found[("flat", 1, bool(f))].append(M.bounds(flatten(vowel)))
+        elif tall and flat:
+            found[("tall", 2, bool(f))].append(M.bounds(flatten(tall)))
+            found[("flat", 2, bool(f))].append(M.bounds(flatten(flat)))
+        if f and low:
+            found[("final", cls)].append(M.bounds(flatten(low)))
+    return {k: median_box(v) for k, v in found.items() if len(v) >= 5}
+
+
+def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
     """Returns {glyph name: outline} for the syllables that could be built.
-    weight(ops, dx, dy) thickens strokes (negative thins), used after squeezing."""
+    weight(ops, dx, dy) thickens strokes (negative thins), used after squeezing.
+    only: the syllables to learn from (the ones the designer drew), when the font
+    already holds built ones. learn: return instead where the designer sets each part,
+    as boxes (see learn_boxes). report: a dict filled with {code point: (upper box,
+    final box or None, "drawn" or "built")} for every syllable, to check alignment."""
     drawn = {}
     for cp in range(BASE, BASE + 11172):
         name = cmap.get(cp)
-        if name is None:
+        if name is None or (only is not None and cp not in only):
             continue
         ops = M.record(glyph_set, name)
         if M.bounds(ops) is not None:
@@ -152,12 +196,59 @@ def fill(glyph_set, cmap, weight):
         upper, low = split(donors[0])
         return upper, low
 
-    def attach(upper, final_donor, slot):
+    # Where the designer sets the parts, so a built syllable stands like its drawn
+    # neighbours: the top and height of the upper part (initial and vowel) for each
+    # vowel, with and without a final (and for each initial when it has enough drawn
+    # syllables of its own), and the top and middle of the final for each vowel. Medians
+    # over the drawn syllables.
+    upper_seen = collections.defaultdict(list)
+    final_seen = collections.defaultdict(list)
+    for cp in drawn:
+        i, v, f = decompose(cp)
+        if f and not clean(cp):
+            continue
+        up, low = split(cp)
+        ub = M.bounds(flatten(up))
+        upper_seen[(v, bool(f))].append((ub[3], ub[3] - ub[1]))
+        upper_seen[(i, v, bool(f))].append((ub[3], ub[3] - ub[1]))
+        if f and low:
+            lb = M.bounds(flatten(low))
+            final_seen[v].append((lb[3], (lb[0] + lb[2]) / 2))
+
+    def middle(pairs):
+        return tuple(sorted(x)[len(x) // 2] for x in zip(*pairs))
+
+    upper_place = {k: middle(x) for k, x in upper_seen.items() if len(x) >= 3}
+    final_place = {k: middle(x) for k, x in final_seen.items() if len(x) >= 3}
+
+    def settle(upper, key):
+        """The upper part scaled (by at most 12 percent either way) to the usual height
+        and moved to the usual top for its vowel, final or not, stroke kept."""
+        i, v, f = key
+        want = upper_place.get((i, v, bool(f))) or upper_place.get((v, bool(f)))
+        if want is None:
+            return upper
+        ub = M.bounds(flatten(upper))
+        k = min(max(want[1] / (ub[3] - ub[1]), 0.88), 1.12)
+        cx = (ub[0] + ub[2]) / 2
+        ops = M.transformed(flatten(upper), k, cx - k * cx, k, want[0] - k * ub[3])
+        if abs(k - 1) > 0.02:
+            ops = weight(ops, 68 * (1 - k), 68 * (1 - k))
+        return M.polygon_points_ops(ops)
+
+    def attach(upper, final_donor, slot, key=None):
         """Sets the donor's final into `slot`, the box the replaced final filled: tops
-        aligned, centred across, pressed down to the slot's height when it is taller."""
+        aligned, centred across, pressed down to the slot's height when it is taller.
+        key, (initial, vowel, final) of the syllable being built: the upper part and the
+        final are set where the designer sets them for that vowel instead (settle)."""
         _, d_low = final_donor
         dl = M.bounds(flatten(d_low))
         top = slot[3]
+        if key is not None:
+            upper = settle(upper, key)
+            if key[1] in final_place:
+                top, mid = final_place[key[1]]
+                slot = (mid, slot[1], mid, top)
         # a taller final reaches further down, and is pressed only past the descent limit
         lowest = -230
         ky = 1.0
@@ -167,7 +258,10 @@ def fill(glyph_set, cmap, weight):
         placed = M.transformed(flatten(d_low), 1.0, cx - (dl[0] + dl[2]) / 2, ky, top - ky * dl[3])
         if ky < 0.98:
             placed = weight(placed, 0.0, 68 * (1 - ky))
-        return upper + M.polygon_points_ops(placed)
+        built = upper + M.polygon_points_ops(placed)
+        if key is not None and key[2] in double_rise:
+            built = shift(built, 0.0, double_rise[key[2]])
+        return built
 
     def parts(cp):
         """(initial, vowel, final) contour lists of a drawn syllable, or None."""
@@ -241,6 +335,9 @@ def fill(glyph_set, cmap, weight):
         return pr is not None and len(pr[0]) == init_size.get(decompose(cp)[0], -1) \
             and (not decompose(cp)[2] or clean(cp))
 
+    if learn:
+        return learn_boxes(drawn, split_parts, trusted)
+
     by_v_f_all = collections.defaultdict(list)
     by_i = collections.defaultdict(list)
     for cp in drawn:
@@ -307,8 +404,10 @@ def fill(glyph_set, cmap, weight):
             donor_f = final_from(v, f)
             if donor_f is None:
                 return None
-            return attach(new_upper, donor_f, M.bounds(flatten(h_low)))
-        return new_upper + h_low
+            return attach(new_upper, donor_f, M.bounds(flatten(h_low)), (i, v, f))
+        if f:
+            return attach(new_upper, (None, h_low), M.bounds(flatten(h_low)), (i, v, f))
+        return settle(new_upper, (i, v, 0))
 
     # how far the designer sets a syllable with a double final above (or below) the same
     # syllable with only its first consonant (않 over 안, 굶 under 굴): the median over
@@ -322,7 +421,7 @@ def fill(glyph_set, cmap, weight):
                 break
     double_rise = {f: sorted(r)[len(r) // 2] for f, r in rises.items()}
 
-    def pressed(i, v, donor_f):
+    def pressed(i, v, f, donor_f):
         """The open syllable pressed into the height the upper parts usually have, with
         the final set under it."""
         plain = drawn[compose(i, v, 0)]
@@ -332,7 +431,7 @@ def fill(glyph_set, cmap, weight):
         ky = (rb[3] - rb[1]) / (pb[3] - pb[1])
         squeezed = M.transformed(flatten(plain), 1.0, 0.0, ky, rb[3] - ky * pb[3])
         squeezed = weight(squeezed, 0.0, 68 * (1 - ky))
-        return attach(M.polygon_points_ops(squeezed), donor_f, M.bounds(flatten(ref_low)))
+        return attach(M.polygon_points_ops(squeezed), donor_f, M.bounds(flatten(ref_low)), (i, v, f))
 
     out = {}
     stats = collections.Counter()
@@ -345,37 +444,27 @@ def fill(glyph_set, cmap, weight):
             donor_f = final_from(v, f)
             iv = [d for d in by_iv.get((i, v), []) if clean(d)]
             if donor_f and iv:
-                # under a double final the initial and vowel stand where the designer
-                # set them in a syllable they share. Best is one with another double
-                # final on the same first consonant (훑 for 훎): its upper part is taken
-                # when it splits cleanly, and the built one is moved so the tops meet.
-                # Next is the syllable with only the first consonant (훌, else 훔), with
-                # the tops set as far apart as the font sets such pairs (double_rise).
+                # the upper part is taken, when it splits cleanly, from a syllable with
+                # another double final on the same first consonant (훑 for 훎), else
+                # with only that consonant (훌, else 훔). attach then sets it, and the
+                # final, where the designer sets them for this vowel (settle).
                 sib = [compose(i, v, g) for g, parts_g in DOUBLE_FINAL.items()
                        if g != f and parts_g[0] == DOUBLE_FINAL.get(f, (None,))[0]
                        and compose(i, v, g) in drawn]
                 single = [compose(i, v, g) for g in DOUBLE_FINAL.get(f, ()) if compose(i, v, g) in drawn]
                 iv.sort(key=lambda d: (d not in sib, d not in single))
                 upper, low = split(iv[0])
-                built = attach(upper, donor_f, M.bounds(flatten(low)))
-                top = None
-                if sib:
-                    top = M.bounds(flatten(drawn[sib[0]]))[3]
-                elif single:
-                    top = M.bounds(flatten(drawn[single[0]]))[3] + double_rise.get(f, 0.0)
-                if top is not None:
-                    built = shift(built, 0.0, top - M.bounds(flatten(built))[3])
-                    stats["double final set by the designer's own"] += 1
+                built = attach(upper, donor_f, M.bounds(flatten(low)), (i, v, f))
                 stats["upper of same initial+vowel"] += 1
             elif i in DOUBLE_OF and donor_f and compose(i, v, 0) in drawn:
                 # a double initial copied twice into a single's box comes out crushed
                 # (뽥 from 봙): the designer's own open syllable (뽜) pressed is better
-                built = pressed(i, v, donor_f)
+                built = pressed(i, v, f, donor_f)
                 stats["open syllable pressed"] += 1
             elif (built := swap_initial(i, v, f)) is not None:
                 stats["initial swapped"] += 1
             elif donor_f and compose(i, v, 0) in drawn:
-                built = pressed(i, v, donor_f)
+                built = pressed(i, v, f, donor_f)
                 stats["open syllable pressed"] += 1
         else:
             iv = [d for d in by_iv.get((i, v), []) if clean(d)]
@@ -391,10 +480,15 @@ def fill(glyph_set, cmap, weight):
                     ky = (ub[3] - bottom) / (ub[3] - ub[1])
                     stretched = M.transformed(flatten(upper), 1.0, 0.0, ky, ub[3] - ky * ub[3])
                     stretched = weight(stretched, 0.0, 68 * (1 - ky))
-                    built = M.polygon_points_ops(stretched)
+                    built = settle(M.polygon_points_ops(stretched), (i, v, 0))
                     stats["final removed, stretched"] += 1
         if built:
             out[cmap[cp]] = flatten(built)
+            if report is not None:
+                k = final_size.get(f, 0) if f else 0
+                order = sorted(built, key=lambda q: M.bounds(q)[3])
+                low, up = (order[:k], order[k:]) if k and k < len(order) else ([], order)
+                report[cp] = (M.bounds(flatten(up)), M.bounds(flatten(low)) if low else None, "built")
         else:
             stats["left to the fallback font"] += 1
 
@@ -409,6 +503,12 @@ def fill(glyph_set, cmap, weight):
         lb, db = M.bounds(flatten(low)), M.bounds(flatten(d_low))
         out[cmap[cp]] = flatten(attach(upper, (None, d_low), (db[0], lb[1], db[2], lb[3])))
         stats["final redrawn"] += 1
+    if report is not None:
+        for cp in drawn:
+            if decompose(cp)[2] and not clean(cp):
+                continue
+            up, low = split(cp)
+            report[cp] = (M.bounds(flatten(up)), M.bounds(flatten(low)) if low else None, "drawn")
     return out, stats
 
 

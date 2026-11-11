@@ -629,7 +629,8 @@ def main():
     post.mapping = {}
     post.glyphOrder = order
 
-    jamo, compose_fea = symbols.add_conjoining_jamo(font, to_tt_glyph_quadratic, embolden)
+    designer = {cp for cp in range(0xAC00, 0xD7A4) if cp in cmap and cmap[cp] not in filled}
+    jamo, compose_fea = symbols.add_conjoining_jamo(font, to_tt_glyph_quadratic, embolden, designer)
     print(f"conjoining jamo: {len(jamo)}")
     symbols.redraw_i_l(font, to_tt_glyph_quadratic)
     straight_f = symbols.redraw_f(font, to_tt_glyph_quadratic)

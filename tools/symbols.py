@@ -604,6 +604,9 @@ def control_picture(cp, c, gs, cmap, weight):
 
 # ---------------------------------------------------------------- conjoining jamo
 
+# old Hangul (yethangul.py): archaic jamo and place forms, turned on for 1.9.0
+OLD_HANGUL = False
+
 COMPAT_INITIAL = [0x3131, 0x3132, 0x3134, 0x3137, 0x3138, 0x3139, 0x3141, 0x3142, 0x3143, 0x3145,
                   0x3146, 0x3147, 0x3148, 0x3149, 0x314A, 0x314B, 0x314C, 0x314D, 0x314E]
 COMPAT_FINAL = [None, 0x3131, 0x3132, 0x3133, 0x3134, 0x3135, 0x3136, 0x3137, 0x3139, 0x313A, 0x313B,
@@ -625,7 +628,7 @@ MIXED_VOWELS = {9: (8, 0), 10: (8, 1), 11: (8, 20),  # ㅘ ㅙ ㅚ
                 14: (13, 4), 15: (13, 5), 16: (13, 20), 19: (18, 20)}   # ㅝ ㅞ ㅟ ㅢ
 
 
-def add_conjoining_jamo(font, to_glyph, weight):
+def add_conjoining_jamo(font, to_glyph, weight, designer=None):
     """Modern conjoining jamo (U+1100..), as Hangul written in decomposed form arrives
     (file names saved on macOS, for one). Each is its compatibility jamo made smaller
     and set in its own fixed place in the two cells (the JAMO_SLOT_ boxes), so an initial,
@@ -697,6 +700,18 @@ def add_conjoining_jamo(font, to_glyph, weight):
         for table in font["cmap"].tables:
             if table.isUnicode():
                 table.cmap[cp] = name
+    # old Hangul: the archaic jamo, and the forms of every jamo for its place in a
+    # syllable, placed where the designer places the parts of the syllables drawn
+    old_base, old_fea = {"L": [], "V": []}, ""
+    if OLD_HANGUL:
+        import hangul_fill
+        import yethangul
+        boxes = hangul_fill.fill(gs, cmap, weight, only=designer, learn=True)
+        slots = {"initial": JAMO_SLOT_INITIAL, "tall": JAMO_SLOT_TALL, "flat": JAMO_SLOT_FLAT,
+                 "final": JAMO_SLOT_FINAL}
+        old_new, old_base, old_fea = yethangul.add(font, to_glyph, weight, boxes, slots, stroke)
+        new += old_new
+        order = font.getGlyphOrder()
     # ss04: the fillers drawn as a ring of dots where their jamo would stand, the
     # initial filler in the initial's place, the vowel filler in the vowel's place
     period = M.record(gs, cmap[ord(".")])
@@ -754,13 +769,15 @@ def add_conjoining_jamo(font, to_glyph, weight):
     font.setGlyphOrder(font.getGlyphOrder() + [n for n in alone.values() if n not in font.getGlyphOrder()])
     glyf.glyphOrder = font.getGlyphOrder()
 
-    initials = [cmap[c] for c in list(range(0x1100, 0x1113)) + [0x115F] if c in cmap]
+    initials = [cmap[c] for c in list(range(0x1100, 0x1113)) + [0x115F] if c in cmap] + \
+        [g for g in old_base["L"] if g not in [cmap.get(c) for c in range(0x1100, 0x1113)]]
     # an initial with nothing after it stands alone too, full size in its two cells. An
     # initial with a final straight after it (ᄀᆲ, or ᄀ with the vowel filler) keeps its
     # place with the final under it, in the same two cells: a terminal gives the pair
     # two cells, and anything drawn wider would be cut off there.
     lone_initials = [cmap[c] for c in range(0x1100, 0x1113) if c in cmap and cmap[c] in alone]
-    vowel_or_filler = [cmap[c] for c in range(0x1160, 0x1176) if c in cmap]
+    vowel_or_filler = [cmap[c] for c in range(0x1160, 0x1176) if c in cmap] + \
+        [g for g in old_base["V"] if g not in [cmap.get(c) for c in range(0x1161, 0x1176)]]
     vowels = [cmap[c] for c in range(0x1161, 0x1176) if c in cmap and cmap[c] in alone]
     finals = [cmap[c] for c in range(0x11A8, 0x11C3) if c in cmap and cmap[c] in alone]
     open_syllables = [cmap[0xAC00 + i * 588 + v * 28] for i in range(19) for v in range(21)
@@ -791,9 +808,11 @@ def add_conjoining_jamo(font, to_glyph, weight):
             "    sub @JAMO_V' lookup jamo_v_alone;\n"
             "    sub @JAMO_T' lookup jamo_t_alone;\n"
             "} hangul_alone;\n")
-    fea = fea_alone + "lookup hangul_compose {\n" + "\n".join(rules) + "\n} hangul_compose;\n" \
+    fea = fea_alone + old_fea + "lookup hangul_compose {\n" + "\n".join(rules) + "\n} hangul_compose;\n" \
         "feature ccmp {\n    lookup hangul_compose;\n" + \
-        ("    lookup hangul_alone;\n" if fea_alone else "") + "} ccmp;\n"
+        ("    lookup hangul_alone;\n" if fea_alone else "") + \
+        ("    lookup oh_initial;\n    lookup oh_final;\n    lookup oh_vowel;\n" if old_fea else "") + \
+        "} ccmp;\n"
     return new, fea
 
 
