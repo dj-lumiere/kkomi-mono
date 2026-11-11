@@ -70,6 +70,58 @@ def touches(a, b, slack=25):
     return not (a[2] + slack < b[0] or b[2] + slack < a[0] or a[3] + slack < b[1] or b[3] + slack < a[1])
 
 
+# the least gap, in units, between a built syllable's final and the strokes above it,
+# when the drawn syllables do not tell a wider one for the vowel
+CLEAR = 45
+
+
+def column_ys(polys, x):
+    """The heights where the outlines cross the upright line at x."""
+    ys = []
+    for poly in polys:
+        for (x0, y0), (x1, y1) in zip(poly, poly[1:] + poly[:1]):
+            if (x0 - x) * (x1 - x) < 0:
+                ys.append(y0 + (y1 - y0) * (x - x0) / (x1 - x0))
+    return ys
+
+
+def gap_below(upper, final):
+    """The least gap, read down every column the final spans, between the lowest stroke
+    of the upper part and the top of the final."""
+    up = M.polygon_points(M.flattened(flatten(upper)))
+    lo = M.polygon_points(M.flattened(final))
+    fb = M.bounds(final)
+    best = 1e9
+    x = fb[0] + 2
+    while x < fb[2]:
+        a, b = column_ys(up, x), column_ys(lo, x)
+        if a and b:
+            best = min(best, min(a) - max(b))
+        x += 8
+    return best
+
+
+def same_way(contours, like):
+    """contours turned to run the way the outer contours of `like` run."""
+    from fontTools.pens.recordingPen import RecordingPen
+    from fontTools.pens.reverseContourPen import ReverseContourPen
+
+    def way(cs):
+        outer = max(cs, key=lambda q: abs(M.signed_area(M.polygon_points(q)[0])))
+        return M.signed_area(M.polygon_points(outer)[0]) > 0
+
+    if not contours or way(contours) == way(like):
+        return contours
+    out = []
+    for q in contours:
+        rec = RecordingPen()
+        rev = ReverseContourPen(rec)
+        for op, args in q:
+            getattr(rev, op)(*args)
+        out.append(rec.value)
+    return out
+
+
 def median_box(boxes):
     """The box whose every side is the median of that side over the boxes."""
     sides = list(zip(*boxes))
@@ -85,6 +137,7 @@ def learn_boxes(drawn, split_parts, trusted):
       ("flat", cls, final)      the flat part of the vowel (classes 1 and 2)
       ("final", cls)            the final
       ("v", vowel, final, part) one vowel: part "all", or its "flat" and "tall" parts
+      ("i", initial, cls, final) one initial    ("f", final, cls) one final
     Missing keys mean too few syllables to tell."""
     found = collections.defaultdict(list)
     for cp in drawn:
@@ -108,12 +161,16 @@ def learn_boxes(drawn, split_parts, trusted):
             found[("flat", 2, bool(f))].append(M.bounds(flatten(flat)))
         if f and low:
             found[("final", cls)].append(M.bounds(flatten(low)))
+        # each initial and each final on its own, by the vowel's class
+        found[("i", i, cls, bool(f))].append(M.bounds(flatten(initial)))
+        if f and low:
+            found[("f", f, cls)].append(M.bounds(flatten(low)))
         # and for each vowel on its own: the whole vowel, and its flat and upright parts
         found[("v", v, bool(f), "all")].append(M.bounds(flatten(vowel)))
         if tall and flat:
             found[("v", v, bool(f), "tall")].append(M.bounds(flatten(tall)))
             found[("v", v, bool(f), "flat")].append(M.bounds(flatten(flat)))
-    return {k: median_box(v) for k, v in found.items() if len(v) >= (3 if k[0] == "v" else 5)}
+    return {k: median_box(v) for k, v in found.items() if len(v) >= (3 if k[0] in "vif" else 5)}
 
 
 def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
@@ -220,12 +277,27 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
         if f and low:
             lb = M.bounds(flatten(low))
             final_seen[v].append((lb[3], (lb[0] + lb[2]) / 2))
+            final_seen[(i, v)].append((lb[3], (lb[0] + lb[2]) / 2))
+
+    # the gap the designer leaves over a final, for each vowel (the median over the
+    # drawn syllables, read down the columns over the final), never under CLEAR
+    gaps_seen = collections.defaultdict(list)
+    for cp in drawn:
+        i, v, f = decompose(cp)
+        if f and clean(cp):
+            up, low = split(cp)
+            if up and low:
+                gaps_seen[v].append(gap_below(up, flatten(low)))
+    clear_for = {v: max(CLEAR, sorted(g)[len(g) // 2]) for v, g in gaps_seen.items() if len(g) >= 5}
 
     def middle(pairs):
         return tuple(sorted(x)[len(x) // 2] for x in zip(*pairs))
 
     upper_place = {k: middle(x) for k, x in upper_seen.items() if len(x) >= 3}
-    final_place = {k: middle(x) for k, x in final_seen.items() if len(x) >= 3}
+    # a row (one initial and vowel) the designer drew finals in sets its own place, so a
+    # built syllable lines up with its drawn neighbours (뿕 with 뿍 뿐 뿔); other rows
+    # take the place for the vowel
+    final_place = {k: middle(x) for k, x in final_seen.items() if len(x) >= (2 if isinstance(k, tuple) else 3)}
 
     def settle(upper, key):
         """The upper part scaled (by at most 12 percent either way) to the usual height
@@ -252,8 +324,14 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
         top = slot[3]
         if key is not None:
             upper = settle(upper, key)
-            if key[1] in final_place:
-                top, mid = final_place[key[1]]
+            place = final_place.get((key[0], key[1])) or final_place.get(key[1])
+            if place:
+                top, mid = place
+                if vowel_class(key[1]) == 1:
+                    # under a vowel below the initial (ㅗ ㅜ ㅡ) the final stands centred
+                    # under the whole upper part (뿌 over its final)
+                    ub = M.bounds(flatten(upper))
+                    mid = (ub[0] + ub[2]) / 2
                 slot = (mid, slot[1], mid, top)
         # a taller final reaches further down, and is pressed only past the descent limit
         lowest = -230
@@ -264,6 +342,18 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
         placed = M.transformed(flatten(d_low), 1.0, cx - (dl[0] + dl[2]) / 2, ky, top - ky * dl[3])
         if ky < 0.98:
             placed = weight(placed, 0.0, 68 * (1 - ky))
+        if key is not None:
+            # the final keeps clear of the strokes above it (the round of ㅎ hangs low):
+            # read down each column over it, and find what the gap lacks. Half of it
+            # the final moves down, half the upper part gives up, pressed from below
+            # with its top kept
+            short = clear_for.get(key[1], CLEAR) - gap_below(upper, placed)
+            if short > 0:
+                placed = M.transformed(placed, 1.0, 0.0, 1.0, -short / 2)
+                ub = M.bounds(flatten(upper))
+                k = (ub[3] - ub[1] - short / 2) / (ub[3] - ub[1])
+                pressed_up = M.transformed(flatten(upper), 1.0, 0.0, k, ub[3] * (1 - k))
+                upper = M.polygon_points_ops(weight(pressed_up, 0.0, 68 * (1 - k)))
         built = upper + M.polygon_points_ops(placed)
         if key is not None and key[2] in double_rise:
             built = shift(built, 0.0, double_rise[key[2]])
@@ -366,7 +456,10 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
         ib, ub = M.bounds(flatten(initial)), M.bounds(flatten(initial + vowel))
         stems = [M.bounds(q) for q in vowel if M.bounds(q)[3] - M.bounds(q)[1] > 0.5 * (ub[3] - ub[1])]
         clear = not stems or ib[2] <= min(b[0] for b in stems) + 20
-        if clear and ib[2] - ib[0] > 0.45 * (ub[2] - ub[0]):
+        # and the vowel kept its flat part (ㅗ of 꽤): a double drawn joined to the ㅗ
+        # under it splits off with it, and lends a box running down over the ㅗ
+        low_enough = ib[1] > ub[1] + 0.3 * (ub[3] - ub[1])
+        if clear and low_enough and ib[2] - ib[0] > 0.45 * (ub[2] - ub[0]):
             by_v_f_double[(v, f)].append(cp)
 
     def aspect(contours):
@@ -449,10 +542,72 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
                 break
     double_rise = {f: sorted(r)[len(r) // 2] for f, r in rises.items()}
 
-    def pressed(i, v, f, donor_f):
+    # ㅙ ㅞ, and the vowel with the same flat part and one stem (ㅚ ㅟ)
+    ONE_STEM = {10: 11, 15: 16}
+
+    def stems_left(contours, n):
+        """Where the n rightmost upright strokes begin, read across the syllable a
+        quarter of its height below its top (above the flat part of the vowel)."""
+        flat = flatten(contours)
+        b = M.bounds(flat)
+        xs = M.crossings(flat, b[3] - 0.25 * (b[3] - b[1]))
+        return xs[-2 * n] if len(xs) >= 2 * n else None
+
+    def tall_swap(i, v):
+        """An open syllable over ㅙ ㅞ (뽸, 퐤), from the one the designer drew with the
+        same initial over ㅚ ㅟ (뾔, 푀): everything left of its
+        ㅣ is kept, and the upright part of ㅙ ㅞ as drawn elsewhere (꽤) is cut out and
+        set where the ㅣ stood, as far from the rest as the ㅣ was, the rest narrowed
+        if it needs the room. None if either syllable is missing."""
+        import pathops
+        from make_italic import path_op, box
+        src = compose(i, ONE_STEM.get(v, -1), 0)
+        # the upright part from a drawn syllable over the same vowel, with a double
+        # initial too when this one has one (its upright part stands in a narrower room)
+        donors = [cp for cp in drawn if decompose(cp)[1] == v and decompose(cp)[2] == 0
+                  and (decompose(cp)[0] in DOUBLE_OF) == (i in DOUBLE_OF)]
+        donors = donors or [cp for cp in drawn if decompose(cp)[1] == v and decompose(cp)[2] == 0]
+        if v not in ONE_STEM or src not in drawn or not donors:
+            return None
+        s_ops, d_ops = flatten(drawn[src]), flatten(drawn[donors[0]])
+        sx, dx = stems_left(drawn[src], 1), stems_left(drawn[donors[0]], 2)
+        if sx is None or dx is None:
+            return None
+        sb, db = M.bounds(s_ops), M.bounds(d_ops)
+        rest = path_op(s_ops, box(sx - 4, -10000, 10000, 10000), pathops.PathOp.DIFFERENCE)
+        stem = path_op(s_ops, box(-10000, -10000, sx - 4, 10000), pathops.PathOp.DIFFERENCE)
+        # the upright part whole, with the bar of ㅔ reaching left of its stems: the
+        # contours that reach the stems and stand clear of the left part (the double
+        # and the flat letter end left of the stems)
+        dcs = drawn[donors[0]]
+        left = M.bounds(d_ops)[0] + 0.3 * (db[2] - db[0])
+        tall = flatten([q for q in dcs if M.bounds(q)[2] > dx - 5 and M.bounds(q)[0] > left])
+        if not rest or not stem or not tall:
+            return None
+        rb, stb, tb = M.bounds(rest), M.bounds(stem), M.bounds(tall)
+        gap = stb[0] - rb[2]
+        # the upright part at the size it is drawn (scaling it would change its strokes),
+        # its right edge where the ㅣ's was or the drawn one's, whichever is further
+        # right, centred on the ㅣ's height
+        dx_shift = max(stb[2], tb[2]) - tb[2]
+        dy_shift = (stb[1] + stb[3]) / 2 - (tb[1] + tb[3]) / 2
+        tall = M.transformed(tall, 1.0, dx_shift, 1.0, dy_shift)
+        # the rest keeps the old gap to the stems, and only a little of it to the bar of
+        # ㅔ, which reaches into the gap as it does in 꿰. It narrows to make room, but
+        # not past 78 percent: a double squeezed further closes its counters
+        stems_at = dx + dx_shift
+        room = min(stems_at - gap, M.bounds(tall)[0] - 0.4 * gap)
+        if room < rb[2]:
+            kx = max((room - rb[0]) / (rb[2] - rb[0]), 0.78)
+            rest = weight(M.transformed(rest, kx, rb[0] * (1 - kx), 1.0, 0.0), 68 * (1 - kx), 0.0)
+        # cutting turns the outlines the TrueType way: turn them back the way the
+        # drawn syllables run, or thickening the strokes later thins this part instead
+        return same_way(M.polygon_points_ops(rest), drawn[src]) + same_way(M.polygon_points_ops(tall), drawn[src])
+
+    def pressed(i, v, f, donor_f, plain=None):
         """The open syllable pressed into the height the upper parts usually have, with
         the final set under it."""
-        plain = drawn[compose(i, v, 0)]
+        plain = plain or drawn[compose(i, v, 0)]
         pb = M.bounds(flatten(plain))
         ref_upper, ref_low = donor_f
         rb = M.bounds(flatten(ref_upper))
@@ -484,6 +639,9 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
                 upper, low = split(iv[0])
                 built = attach(upper, donor_f, M.bounds(flatten(low)), (i, v, f))
                 stats["upper of same initial+vowel"] += 1
+            elif i in DOUBLE_OF and donor_f and v in ONE_STEM and (open_ := tall_swap(i, v)):
+                built = pressed(i, v, f, donor_f, plain=open_)
+                stats["upright part swapped"] += 1
             elif i in DOUBLE_OF and donor_f and compose(i, v, 0) in drawn:
                 # a double initial copied twice into a single's box comes out crushed
                 # (뽥 from 봙): the designer's own open syllable (뽜) pressed is better
@@ -496,7 +654,10 @@ def fill(glyph_set, cmap, weight, only=None, learn=False, report=None):
                 stats["open syllable pressed"] += 1
         else:
             iv = [d for d in by_iv.get((i, v), []) if clean(d)]
-            if (built := swap_initial(i, v, 0)) is not None:
+            if v in ONE_STEM and (built := tall_swap(i, v)) is not None:
+                built = settle(built, (i, v, 0))
+                stats["upright part swapped"] += 1
+            elif (built := swap_initial(i, v, 0)) is not None:
                 stats["initial swapped"] += 1
             elif iv:
                 upper, _ = split(iv[0])

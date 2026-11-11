@@ -103,14 +103,30 @@ MODERN_VOWELS = ["A", "AE", "YA", "YAE", "EO", "E", "YEO", "YE", "O", "WA", "WAE
 # (ㆍ where ㅡ is), or with upright letters beside it (ᆡ where ㅢ is)
 FLAT_TEMPLATE = {"O": 8, "YO": 12, "U": 13, "YU": 17, "EU": 18, "ARAEA": 18}
 MIXED_TEMPLATE = {"O": 9, "YO": 9, "U": 14, "YU": 14, "EU": 19, "ARAEA": 19}
+# upright letters with two stems
+TWO_STEMS = {"AE", "YAE", "E", "YE"}
+# flat letter, then one or two stems on the right: ㅚ ㅙ, ㅟ ㅞ, ㅢ
+MIXED_BY_STEMS = {"O": {1: 11, 2: 10}, "U": {1: 16, 2: 15}, "EU": {1: 19, 2: 19}}
 
 
 def vowel_template(atoms):
     """The modern vowel (index) whose place a vowel made of these letters takes."""
     flats = [a for a in atoms if a in FLAT]
     talls = [a for a in atoms if a in TALL]
+    if atoms[0] in TALL:
+        # an upright letter first (ᅶ ᆜ ᆙ): it stands where that letter would, any flat
+        # letter after it goes small under it
+        return MODERN_VOWELS.index(talls[0]) if len(talls) == 1 else MODERN_VOWELS.index("AE")
+    for n, name in enumerate(MODERN_VOWELS):
+        if vowel_atoms(name) == atoms:
+            return n
     if flats and talls:
-        return MIXED_TEMPLATE[flats[0]]
+        # a flat letter, then upright letters: the modern vowel with the same flat
+        # letter and as many stems on the right (ㅜㅕ as ㅟ, ㅜ with ㅣㅣ as ㅞ), the
+        # upright letters put in the place of its right part
+        stems = sum(2 if a in TWO_STEMS else 1 for a in talls)
+        kind = {"O": "O", "YO": "O", "U": "U", "YU": "U", "EU": "EU", "ARAEA": "EU"}[flats[0]]
+        return MIXED_BY_STEMS[kind][min(stems, 2)]
     if flats:
         return FLAT_TEMPLATE[flats[0]]
     if len(talls) == 1:
@@ -118,8 +134,51 @@ def vowel_template(atoms):
     return MODERN_VOWELS.index("AE")
 
 
+# the modern initials and finals, in jamo order, as letter names
+MODERN_INITIALS = ["KIYEOK", "SSANGKIYEOK", "NIEUN", "TIKEUT", "SSANGTIKEUT", "RIEUL", "MIEUM",
+                   "PIEUP", "SSANGPIEUP", "SIOS", "SSANGSIOS", "IEUNG", "CIEUC", "SSANGCIEUC",
+                   "CHIEUCH", "KHIEUKH", "THIEUTH", "PHIEUPH", "HIEUH"]
+MODERN_FINALS = [None, "KIYEOK", "SSANGKIYEOK", "KIYEOK-SIOS", "NIEUN", "NIEUN-CIEUC", "NIEUN-HIEUH",
+                 "TIKEUT", "RIEUL", "RIEUL-KIYEOK", "RIEUL-MIEUM", "RIEUL-PIEUP", "RIEUL-SIOS",
+                 "RIEUL-THIEUTH", "RIEUL-PHIEUPH", "RIEUL-HIEUH", "MIEUM", "PIEUP", "PIEUP-SIOS",
+                 "SIOS", "SSANGSIOS", "IEUNG", "CIEUC", "CHIEUCH", "KHIEUKH", "THIEUTH", "PHIEUPH", "HIEUH"]
+# old letters drawn at the size of a modern one
+LETTER_TEMPLATE = {"PANSIOS": "SIOS", "YESIEUNG": "IEUNG", "YEORINHIEUH": "HIEUH",
+                   "KAPYEOUNPIEUP": "PIEUP", "KAPYEOUNMIEUM": "MIEUM", "KAPYEOUNPHIEUPH": "PHIEUPH",
+                   "KAPYEOUNSSANGPIEUP": "SSANGPIEUP", "SSANGNIEUN": "SSANGTIKEUT",
+                   "SSANGIEUNG": "SSANGSIOS", "SSANGHIEUH": "SSANGSIOS"}
+
+
+def letter_name(atom):
+    return atom[1] if isinstance(atom, tuple) else atom
+
+
+def consonant_template(atoms, role):
+    """The modern initial or final (index) whose place and size a consonant made of
+    these pieces takes: itself, the modern letter an old one is drawn like, or for a
+    cluster a modern double (ㅃ for ᄢ, ㄺ for ᇘ)."""
+    modern = MODERN_INITIALS if role == "L" else MODERN_FINALS
+    if len(atoms) == 1:
+        name = LETTER_TEMPLATE.get(letter_name(atoms[0]), letter_name(atoms[0]))
+        if isinstance(atoms[0], tuple) and atoms[0][0] == "kap":
+            name = LETTER_TEMPLATE.get("KAPYEOUN" + atoms[0][1], atoms[0][1])
+        if name in modern:
+            return modern.index(name)
+    first = LETTER_TEMPLATE.get(letter_name(atoms[0]), letter_name(atoms[0]))
+    if role == "L":
+        double = {"KIYEOK": 1, "TIKEUT": 4, "PIEUP": 8, "SIOS": 10, "CIEUC": 13}
+        return double.get(first, 10)
+    if len(atoms) == 2 and f"{first}-{letter_name(atoms[1])}" in modern:
+        return modern.index(f"{first}-{letter_name(atoms[1])}")
+    double = {"KIYEOK": 3, "NIEUN": 5, "RIEUL": 9, "PIEUP": 18, "SIOS": 20}
+    return double.get(first, 9)
+
+
 def vowel_class(atoms):
-    """0: upright letters only (to the right), 1: flat only (below), 2: both."""
+    """0: upright letters only (to the right), or an upright letter first, 1: flat only
+    (below), 2: flat letters first, then upright ones."""
+    if atoms[0] in TALL:
+        return 0
     flat = any(a in FLAT for a in atoms)
     tall = any(a in TALL for a in atoms)
     return 2 if flat and tall else 1 if flat else 0
@@ -158,31 +217,47 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
         return M.record(gs, cmap[letters[atom]])
 
     def one_leg_short(ops, left):
-        """ㅅ ㅈ ㅊ with one leg drawn up short: the right one for the chitueum letters
-        (ᄼ, its left leg runs long), the left one for the ceongchieum letters (ᄾ). Below
-        the middle height, that side is pressed up toward the middle, easing in across
-        the middle of the letter so the strokes stay joined and their ends round."""
-        b = M.bounds(ops)
-        mid_y = (b[1] + b[3]) / 2
-        cx, w = (b[0] + b[2]) / 2, b[2] - b[0]
-
-        def press(x):
-            t = (x - (cx - 0.12 * w)) / (0.24 * w)
-            t = min(max(t, 0.0), 1.0)
-            if left:
-                t = 1 - t
-            return 1 - 0.4 * t
-
-        out = []
-        for op, args in ops:
-            pts = []
-            for p in args:
-                if p is None or p[1] >= mid_y:
-                    pts.append(p)
-                else:
-                    pts.append((p[0], mid_y - (mid_y - p[1]) * press(p[0])))
-            out.append((op, tuple(pts)))
-        return out
+        """ㅅ ㅈ ㅊ with one leg half as long: the right leg for the chitueum letters (ᄼ),
+        the left leg for the ceongchieum letters (ᄾ), measured from its foot to where
+        the two legs part. The letters are lopsided already, so only a leg cut this far
+        shows. The leg's end keeps the pen's round shape: it is moved up the leg."""
+        import pathops
+        from make_italic import path_op, box
+        flat = M.flattened(ops)
+        b = M.bounds(flat)
+        cx = (b[0] + b[2]) / 2
+        # where the legs part: going up from the bottom, past the height where both
+        # legs are crossed, the first height where they have joined into one stroke
+        # (the bars of ㅈ ㅊ above do not count)
+        part, seen, y = b[3], False, b[1] + 2
+        while y < b[3]:
+            n = len(M.crossings(flat, y))
+            if n >= 4:
+                seen = True
+            elif seen:
+                part = y
+                break
+            y += 5
+        # the foot of the leg being cut, which may stop short of the letter's bottom
+        pts = [q for poly in M.polygon_points(flat) for q in poly]
+        foot = min((q[1] for q in pts if (q[0] < cx if left else q[0] > cx) and q[1] < part), default=b[1])
+        h = part - foot
+        lo, hi = (-10000, cx) if left else (cx, 10000)
+        # the leg's direction, from the middles of its stroke at two heights
+        def mid(y):
+            xs = [x for x in M.crossings(flat, y) if lo < x < hi]
+            if len(xs) < 2:
+                raise SystemExit("old Hangul: no leg to cut short")
+            return (xs[0] + xs[1]) / 2
+        y0, y1 = foot + 0.3 * h, foot + 0.6 * h
+        dx_per_y = (mid(y1) - mid(y0)) / (y1 - y0)
+        # the end of the leg (its round cap and a little more) moves up the leg by half
+        # the leg's height, and the leg below where it now ends goes
+        end = path_op(ops, box(lo, -10000, hi, foot + 0.2 * h), pathops.PathOp.INTERSECTION)
+        lift = 0.5 * h
+        end = M.transformed(end, 1.0, dx_per_y * lift, 1.0, lift)
+        rest = path_op(ops, box(lo, -10000, hi, foot + 0.6 * h), pathops.PathOp.DIFFERENCE)
+        return path_op(rest, end, pathops.PathOp.UNION)
 
     ref_h = M.bounds(shape("KIYEOK"))[3] - M.bounds(shape("KIYEOK"))[1]
 
@@ -202,7 +277,10 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
         return out
 
     def stack(atoms, gap=0.12):
-        """Flat vowel letters one under the other, in order from the top."""
+        """Flat vowel letters one under the other, in order from the top. Two araea
+        stand side by side (ᆢ)."""
+        if atoms == ["ARAEA", "ARAEA"]:
+            return row(atoms, gap=0.5)
         out, y = [], 0.0
         for a in atoms:
             ops = shape(a)
@@ -230,10 +308,56 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
                              1.0, (box[1] + box[3]) / 2 - (ob[1] + ob[3]) / 2)
 
     ref_consonant = shape("KIYEOK")
+    # the gap between the two stems of ㅐ, as a share of ㄱ's height (what row takes)
+    ae = M.flattened(shape("AE"))
+    aeb = M.bounds(ae)
+    xs = M.crossings(ae, aeb[1] + 0.15 * (aeb[3] - aeb[1]))
+    ae_gap = (xs[2] - xs[1]) / ref_h if len(xs) >= 4 else 0.3
     ref_tall, ref_flat = shape("A"), shape("O")
 
     def consonant(atoms, box):
+        """In the fixed places (the default forms): fitted to the box at ㄱ's scale."""
         return place(row(atoms), box, ref_consonant)
+
+    def consonant_at(atoms, role, cls, f):
+        """Where and as large as the designer draws the modern letter it takes after
+        (consonant_template): scaled so that letter would fill its box's height, then
+        narrowed (to at most half) if it is wider than the box. Falls back to the class
+        boxes."""
+        t = consonant_template(atoms, role)
+        if role == "L":
+            box = boxes.get(("i", t, cls, f))
+            model = MODERN_INITIALS[t]
+            fallback = boxes[("initial", cls, f)]
+        else:
+            box = boxes.get(("f", t, cls))
+            model = MODERN_FINALS[t]
+            fallback = boxes[("final", cls)]
+        if box is None:
+            return consonant(atoms, fallback)
+        mb = M.bounds(row(consonant_atoms(model, letters)))
+        k = (box[3] - box[1]) / (mb[3] - mb[1])
+        # every letter stands in the one place for its class (the designer's own places
+        # differ letter to letter, as handwriting does), at the size of its model
+        size = box
+        box = (fallback[0], fallback[1], fallback[2], fallback[3])
+        cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+        half_w, half_h = (size[2] - size[0]) / 2, (size[3] - size[1]) / 2
+        box = (cx - half_w, cy - half_h, cx + half_w, cy + half_h)
+        ops = row(atoms)
+        b = M.bounds(ops)
+        # across and up are fitted apart, as the designer squeezes a letter to its place
+        # (ㄱ of 그 is wide and low), but never more than 1.8 times apart
+        kx = (box[2] - box[0]) / (b[2] - b[0])
+        ky = (box[3] - box[1]) / (b[3] - b[1])
+        kx = min(max(kx, ky / 1.8), ky * 1.8)
+        if len(atoms) > 1:
+            kx = min(kx, (box[2] - box[0]) * 1.1 / (b[2] - b[0]))
+        out = M.transformed(ops, kx, 0.0, ky, 0.0)
+        out = weight(out, stroke * (1 - kx), stroke * (1 - ky))
+        ob = M.bounds(out)
+        return M.transformed(out, 1.0, (box[0] + box[2]) / 2 - (ob[0] + ob[2]) / 2,
+                             1.0, (box[1] + box[3]) / 2 - (ob[1] + ob[3]) / 2)
 
     def scaled(ops, box, k, kx=None):
         """ops scaled by k (across by kx, when given, but never past the box's width),
@@ -260,28 +384,60 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
 
     def vowel_at(atoms, f, cls):
         """Where the designer sets the modern vowel it takes after (vowel_template), at
-        that vowel's scale: flat letters as wide as its flat letter is drawn, upright
-        letters as tall as its upright letter. Falls back to the class boxes."""
+        that vowel's scale. The letters fall in three runs, in the order written:
+          flat letters before any upright one (ㅗ of ㅘ) go under the initial, as wide
+            as the model's flat letter, the run no taller than the box allows (ᆂ);
+          upright letters (ㅏ ㅑ ㅣ) stand to the right, as tall as the model's
+            upright letter, a clear gap between two of them (ᆝ);
+          flat letters after an upright one (ㅗ of ᅶ, ㅡ of ᆜ) sit small under it, the
+            upright letters drawn up to make room.
+        Falls back to the class boxes."""
         t = vowel_template(atoms)
         model = vowel_atoms(MODERN_VOWELS[t])
+        first_tall = next((n for n, a in enumerate(atoms) if a in TALL), len(atoms))
+        before = [a for a in atoms[:first_tall] if a in FLAT]
         talls = [a for a in atoms if a in TALL]
-        flats = [a for a in atoms if a in FLAT]
+        after = [a for a in atoms[first_tall:] if a in FLAT]
         whole = boxes.get(("v", t, f, "all"))
         if whole is None:
             return vowel(atoms, boxes.get(("tall", cls, f)), boxes.get(("flat", cls, f)))
         flat_box = boxes.get(("v", t, f, "flat"), whole) if talls else whole
-        tall_box = boxes.get(("v", t, f, "tall"), whole) if flats else whole
+        tall_box = boxes.get(("v", t, f, "tall"), whole) if before else whole
         out = []
-        if flats:
-            ref = shape([a for a in model if a in FLAT][0])
-            rb = M.bounds(ref)
-            k = (flat_box[2] - flat_box[0]) / (rb[2] - rb[0])
-            out += scaled(stack(flats), flat_box, k)
+        model_flat = [a for a in model if a in FLAT]
+        model_tall = [a for a in model if a in TALL]
+        k_flat = None
+        if model_flat:
+            rb = M.bounds(shape(model_flat[0]))
+            k_flat = (flat_box[2] - flat_box[0]) / (rb[2] - rb[0])
+        if before:
+            ops = stack(before)
+            ob = M.bounds(ops)
+            k = min(k_flat, (flat_box[3] - flat_box[1]) * 1.3 / (ob[3] - ob[1]))
+            out += scaled(ops, flat_box, k)
         if talls:
-            ref = shape([a for a in model if a in TALL][0])
+            ref = shape(model_tall[0] if model_tall else "I")
             rb = M.bounds(ref)
             k = (tall_box[3] - tall_box[1]) / (rb[3] - rb[1])
-            out += scaled(row(talls, gap=0.05), tall_box, k)
+            box = tall_box
+            if after:
+                # the upright letters keep the upper two thirds of the box
+                h = box[3] - box[1]
+                box = (box[0], box[3] - 0.66 * h, box[2], box[3])
+                k *= 0.66
+            # two upright letters may run a little wider than the model's one
+            wide_box = box if len(talls) == 1 else (box[0] - 0.12 * (box[2] - box[0]), box[1], box[2], box[3])
+            # stems as far apart as the two stems of ㅐ
+            uprights = scaled(row(talls, gap=ae_gap), wide_box, k)
+            out += uprights
+            if after:
+                stem = M.bounds(uprights)
+                ops = stack(after)
+                ob = M.bounds(ops)
+                kf = (k_flat or k) * 0.6
+                h = tall_box[3] - tall_box[1]
+                below = (stem[0] - 0.1 * h, tall_box[1], stem[2] + 0.1 * h, tall_box[1] + 0.3 * h)
+                out += scaled(ops, below, min(kf, (below[3] - below[1]) / (ob[3] - ob[1])))
         return out
 
     jamo = {}                       # cp -> (role, atoms, vowel class or None)
@@ -321,13 +477,13 @@ def add(font, to_glyph, weight, boxes, slots, stroke):
         if role == "L":
             for c in range(3):
                 for f in (False, True):
-                    put(f"{name}.L{c}{int(f)}", consonant(atoms, boxes[("initial", c, f)]), wide, 0)
+                    put(f"{name}.L{c}{int(f)}", consonant_at(atoms, "L", c, f), wide, 0)
         elif role == "V":
             for f in (False, True):
                 put(f"{name}.V{int(f)}", vowel_at(atoms, f, cls), 0, -wide)
         else:
             for c in range(3):
-                put(f"{name}.T{c}", consonant(atoms, boxes[("final", c)]), 0, -wide)
+                put(f"{name}.T{c}", consonant_at(atoms, "T", c, True), 0, -wide)
     font.setGlyphOrder(order + [n for n in new if n not in order])
     glyf.glyphOrder = font.getGlyphOrder()
 
