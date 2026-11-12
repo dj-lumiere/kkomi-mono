@@ -74,10 +74,11 @@ def frame_of(jamo, var=None):
     return variant(FR.FRAMES[jamo], jamo, var)
 
 
-def place_row(region, comps, singles):
-    """Boxes for components side by side in region."""
+def place_row(region, comps, singles, touch=False):
+    """Boxes for components side by side in region. touch: no white between them
+    (three initials are written touching)."""
     x0, y0, x1, y1 = region
-    gaps = [(-35 if a[0] in SLANT and b[0] in SLANT else 35) for a, b in zip(comps, comps[1:])]
+    gaps = [(-35 if a[0] in SLANT and b[0] in SLANT else (0 if touch else 35)) for a, b in zip(comps, comps[1:])]
     ws = np.array([s[2] - s[0] for s in singles])
     room = (x1 - x0) - sum(gaps)
     widths = room * ws / ws.sum()
@@ -107,15 +108,18 @@ def widen(region, singles, n, lo, hi, centred):
 
 
 def light_boxes(region, version):
+    """The consonant over a small ㅇ: version A halves the height, B gives ㅇ a third,
+    C (the one chosen) splits it 60:40."""
     x0, y0, x1, y1 = region
     H = y1 - y0
-    ring = (H - 35) / 2 if version == "A" else H / 3
+    share = {"A": 0.5, "B": 1 / 3}.get(version, 0.4)     # the ring's share of the height
+    ring = (H - 35) * share
     ring = max(ring, PEN * 1.6)
     cx = (x0 + x1) / 2
     return (x0, y0 + ring + 35, x1, y1), (cx - ring / 2, y0, cx + ring / 2, y0 + ring)
 
 
-def initial_parts(ch, v, hf, version="A", vb=None):
+def initial_parts(ch, v, hf, version="C", vb=None):
     vc = H.vowel_class(v)
     comps, light = parse(ch)
     sbox = lambda j: box(("I", I.index(j), v, hf), ("I", I.index(j), vc, hf), ("I*", vc, hf))
@@ -131,7 +135,7 @@ def initial_parts(ch, v, hf, version="A", vb=None):
     singles = [sbox(j) for j, _ in comps]
     right = (vb[0] - 30) if vc == 0 else 960      # a vowel on the right stops the initial
     region = widen(region, singles, len(comps), 40, right, centred=False)
-    boxes = place_row(region, comps, singles)
+    boxes = place_row(region, comps, singles, touch=len(comps) >= 3)
     return [(frame_of(j, var), b) for (j, var), b in zip(comps, boxes)], True
 
 
@@ -161,7 +165,7 @@ def vowel_parts(ch, hf, double):
     return v, model, how, b
 
 
-def syllable(text, version="A"):
+def syllable(text, version="C"):
     """text: initial, vowel, final (conjoining jamo, or compatibility jamo for modern)."""
     L, Vc = text[0], text[1]
     T = text[2] if len(text) > 2 else None
@@ -255,8 +259,7 @@ ROWS = [
                                   ("orig", "시"), ("ㅅㅣ",), ("orig", "짜"), ("ㅉㅏ",), ("orig", "닭"), ("ㄷㅏㄺ",)]),
     ("원본 | 조합: 쁠 쓸", [("orig", "쁠"), ("ㅃㅡㄹ",), ("orig", "쓸"), ("ㅆㅡㄹ",)]),
     ("2개, 3개 묶음", [("ᄡᆞᆯ",), ("ᄢᅳᆷ",), ("ᄣᅢ",), ("ᄠᅳᆮ",), ("ᄧᅡ",), ("ᄢᅮᆯ",), ("ᄃᆞᇌ",), ("ᄡᅵ",), ("ᄩᅥ",)]),
-    ("연서 A (높이를 반씩)", [("ᄫᅵ",), ("가",), ("ᄫᆡ",), ("ᄝᅵ",), ("ᅗᅥ",), ("ᄫᅳᆯ",), ("ᄫᅡᆫ",)]),
-    ("연서 B (ㅇ이 1/3)", [("ᄫᅵ", "B"), ("가",), ("ᄫᆡ", "B"), ("ᄝᅵ", "B"), ("ᅗᅥ", "B"), ("ᄫᅳᆯ", "B"), ("ᄫᅡᆫ", "B")]),
+    ("연서 (60:40)", [("ᄫᅵ",), ("가",), ("ᄫᆡ",), ("ᄝᅵ",), ("ᅗᅥ",), ("ᄫᅳᆯ",), ("ᄫᅡᆫ",)]),
     ("치두 / 정치: ㅅ ᄼ ᄾ  ㅈ ᅎ ᅐ  ㅊ ᅔ ᅕ", [("ㅅㅣ",), ("ᄼᅵ",), ("ᄾᅵ",), ("ㅈㅏ",), ("ᅎᅡ",), ("ᅐᅡ",),
                                           ("ㅊㅣ",), ("ᅔᅵ",), ("ᅕᅵ",)]),
     ("쌍: ㅆ ᄽ ᄿ  ㅉ ᅏ ᅑ", [("ㅆㅣ",), ("ᄽᅵ",), ("ᄿᅵ",), ("ㅉㅏ",), ("ᅏᅡ",), ("ᅑᅡ",)]),
@@ -276,7 +279,7 @@ def main():
                     a, b = (ox + CELL[0] * k, oy + (TOP - CELL[3]) * k), (ox + CELL[2] * k, oy + (TOP - CELL[1]) * k)
                     d.rectangle([a, b], outline=(185, 185, 185), width=1)
                 original(d, it[-1] if it[0] == "orig" else it[0], ox, oy, k); continue
-            parts = syllable(it[0], it[1] if len(it) > 1 else "A")
+            parts = syllable(it[0], it[1] if len(it) > 1 else "C")
             if os.environ.get("GRID"):
                 draw_grid(d, parts, ox, oy, k)
             draw_parts(d, parts, ox, oy, k)
