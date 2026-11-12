@@ -500,6 +500,40 @@ def stretch_half(font, k):
     return len(drawn)
 
 
+def grow_points(font, k, chars=".,:;"):
+    """The period, comma, colon and semicolon made k times larger, each dot about its own
+    middle (a dot sitting on the baseline grows from the baseline up, the comma's tail
+    grows below it): drawn as small as one stroke they get lost beside the taller letters."""
+    gs = font.getGlyphSet()
+    cmap = font.getBestCmap()
+    glyf, hmtx = font["glyf"], font["hmtx"]
+    done = []
+    for ch in chars:
+        name = cmap.get(ord(ch))
+        if not name or name in done:
+            continue
+        contours, cur = [], []
+        for op, args in M.record(gs, name):
+            if op == "moveTo" and cur:
+                contours.append(cur); cur = []
+            cur.append((op, args))
+        if cur:
+            contours.append(cur)
+        ops = []
+        for c in contours:
+            b = M.bounds(c)
+            if not b:
+                continue
+            cx = (b[0] + b[2]) / 2
+            cy = 0.0 if b[1] < 30 else (b[1] + b[3]) / 2
+            ops += M.transformed(c, k, cx * (1 - k), k, cy * (1 - k))
+        glyf[name] = to_tt_glyph_quadratic(ops)
+        glyf[name].recalcBounds(glyf)
+        hmtx[name] = (hmtx[name][0], getattr(glyf[name], "xMin", 0))
+        done.append(name)
+    return done
+
+
 def stretch_tall(font, k):
     """Every glyph made k times taller, standing on the baseline, and its flat strokes
     thinned back to their width: stretching thickens them by k, the upright strokes
@@ -733,6 +767,7 @@ def main():
             if not text.endswith(suffix):
                 rec.string = text + suffix
     print(f"half-width glyphs made taller: {stretch_half(font, M.HALF_TALL)}")
+    print(f"points made larger: {len(grow_points(font, M.POINT_GROW))}")
     stretch_tall(font, M.TALL)
     # after the stretch, so the rounded turns come out as circles, not ellipses
     rounded = symbols.round_kana(font, to_tt_glyph_quadratic, embolden)
