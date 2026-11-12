@@ -542,9 +542,61 @@ ROWS = [
 ]
 
 
+COMPV = {"ㅘ": "ㅗㅏ", "ㅙ": "ㅗㅐ", "ㅚ": "ㅗㅣ", "ㅝ": "ㅜㅓ", "ㅞ": "ㅜㅔ", "ㅟ": "ㅜㅣ", "ㅢ": "ㅡㅣ"}
+LIGHT = {"ㅂ": "ㅸ", "ㅁ": "ㅱ", "ㅍ": "ㆄ", "ㅃ": "ㅹ"}
+LABEL_FONT = os.path.join(os.path.dirname(SRC), "..", "fonts", "KNPSKkomiMono-Regular.ttf")
+
+
+def describe(it):
+    """The syllable's slots: (initial 1-3, vowel 1-3, final 1-3) as compatibility jamo."""
+    text = it[1] if it[0] == "orig" else it[0]
+    if len(text) == 1:                       # a precomposed modern syllable
+        n = ord(text) - 0xAC00
+        text = I[n // 588] + V[n % 588 // 28] + (F[n % 28] if n % 28 else "")
+    L, Vc = text[0], text[1]
+    T = text[2] if len(text) > 2 else None
+    Lc = L if "CHOSEONG" in unicodedata.name(L) else chr(0x1100 + I.index(L))
+    comps, light = parse(Lc)
+    mark = {"chi": "치", "jeong": "정"}
+    if light:
+        ini = [LIGHT.get(comps[0][0], comps[0][0] + "ㅇ")]
+    else:
+        ini = [j + mark.get(var, "") for j, var in comps]
+    if Vc in V:
+        vow = list(COMPV.get(Vc, Vc))
+    elif "JUNGSEONG" in unicodedata.name(Vc):
+        vow = []
+        for t in vowel_tokens(Vc):
+            vow += list(COMPV.get(t, t))
+    else:
+        vow = [Vc]
+    fin = []
+    if T:
+        Tc = T if "JONGSEONG" in unicodedata.name(T) else chr(0x11A7 + F.index(T))
+        fin = [j for j, _ in parse(Tc)[0]]
+    return ini, vow, fin
+
+
+def label(d, it, x, y, w, font):
+    """Three rows (초 중 종) of three slots each; an empty slot is a dot."""
+    from PIL import ImageFont
+    rows = describe(it)
+    lh = int(font.size * 1.45)
+    for r, (name, slots) in enumerate(zip("초중종", rows)):
+        yy = y + r * lh
+        d.text((x, yy), name, fill=(140, 140, 140), font=font)
+        sw = (w - font.size * 1.4) / 3
+        for k in range(3):
+            t = slots[k] if k < len(slots) else "·"
+            d.text((x + font.size * 1.4 + k * sw, yy), t, fill=(0, 0, 0) if k < len(slots) else (190, 190, 190), font=font)
+
+
 def main():
-    """One image per row: SHEET with _0, _1, ... before the extension."""
+    """One image per row: SHEET with _0, _1, ... before the extension. Under each syllable
+    its slots (초성 1-3, 중성 1-3, 종성 1-3)."""
+    from PIL import ImageFont
     k = float(os.environ.get("SCALE", "0.11")); cell = int(1000 * k)
+    n = int(os.environ.get("DOWN", "1"))
     for r, (title, items) in enumerate(ROWS):
         img = Image.new("RGB", (cell * len(items) + 12, int(1150 * k) + 12), "white")
         d = ImageDraw.Draw(img)
@@ -559,10 +611,18 @@ def main():
             if os.environ.get("GRID"):
                 draw_grid(d, parts, ox, oy, k)
             draw_parts(d, parts, ox, oy, k)
-        base, ext = os.path.splitext(SHEET)
-        if os.environ.get("DOWN"):
-            n = int(os.environ["DOWN"])
+        if n > 1:
             img = img.resize((img.size[0] // n, img.size[1] // n), Image.LANCZOS)
+        if os.environ.get("LABELS", "1") == "1":
+            fs = max(11, int(cell / n * 0.15))
+            font = ImageFont.truetype(LABEL_FONT, fs)
+            out = Image.new("RGB", (img.size[0], img.size[1] + int(3 * fs * 1.45) + 8), "white")
+            out.paste(img, (0, 0))
+            d = ImageDraw.Draw(out)
+            for c, it in enumerate(items):
+                label(d, it, (6 + c * cell) / n + 2, img.size[1] + 2, cell / n - 6, font)
+            img = out
+        base, ext = os.path.splitext(SHEET)
         img.save(f"{base}_{r}{ext}")
 
 main()
