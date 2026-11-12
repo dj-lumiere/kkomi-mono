@@ -102,6 +102,8 @@ def jamo_parts(j, var, b):
     two never run together in a low box."""
     if j == "ㅣ":
         return [(FR.FRAMES["ㅣ"], flat("ㅣ", b))]
+    if j in V:
+        return [(FR.FRAMES[j], b)]
     if j != "ㆆ":
         return [(frame_of(j, var), b)]
     x0, y0, x1, y1 = b
@@ -207,9 +209,10 @@ def initial_parts(ch, v, hf, version, vb, vx0=None, hard=False):
     if EXTRA[0] and not light:
         comps = comps + [(e, None) for e in EXTRA[0]]
     def sbox(j):
-        if j == "ㅣ":                    # a vowel standing in the row: a stem as tall as the first consonant
+        if j in V:                       # a vowel standing in the row, as tall as the first consonant
             f = sbox0(comps[0][0])
-            return (0, f[1], PEN + 50, f[3])
+            w = PEN + 50 if j == "ㅣ" else 0.8 * (lambda q: q[2] - q[0])(box(("V", V.index(j), hf), ("V", V.index(j), not hf)))
+            return (0, f[1], w, f[3])
         return sbox0(j)
     if light:
         j, var = comps[0]
@@ -226,7 +229,7 @@ def initial_parts(ch, v, hf, version, vb, vx0=None, hard=False):
     # can move; above a mixed vowel (ㅙ) it cannot, and the initial is narrowed instead
     right = (vx0 - gap_to_vowel(comps, light)) if vx0 is not None else CELL[2]
     region = widen(region, singles, len(comps), CELL[0] + 20, right, centred=False)
-    boxes, end = place_row(region, comps, singles, [MINW.get(("I", BOXOF.get(j, j)), PEN + 30) for j, _ in comps],
+    boxes, end = place_row(region, comps, singles, [MINW.get(("I", BOXOF.get(j, j)), PEN + 30) if j not in V else (PEN + 30) for j, _ in comps],
                            CELL[0] + 20, right, hard=hard)
     return [q for (j, var), b in zip(comps, boxes) for q in jamo_parts(j, var, b)], end
 
@@ -357,13 +360,24 @@ def vowel_layout(ch, hf, double):
         b = vbox("ㅜ")
         f = FR.F([(0.5, 1), (0.5, 0), (0.1, 0.72), (0.9, 0.72), (0, 0.36), (1, 0.36)], [(0, 1), (2, 3), (4, 5)])
         return V.index("ㅜ"), [(f, b)], b, None, 1, False
-    if toks == ["ㅣ", "ㅗ", "ㅣ"]:
-        # the first ㅣ stands in the initial's row as if a consonant; ㅗ and the last ㅣ
-        # make a cross (十) in ㅗ's place under it
-        EXTRA[0] = ["ㅣ"]
-        b = vbox("ㅜ")
-        f = FR.F([(0.5, 1), (0.5, 0), (0, 0.62), (1, 0.62)], [(0, 1), (2, 3)])
-        return V.index("ㅜ"), [(f, b)], b, None, 1, False
+    if toks[0] not in HOR and any(t in HOR for t in toks) and toks != ["ㅣ", "ㆍ"]:
+        # vertical vowels before the first horizontal one stand in the initial's row as
+        # if consonants (ㅣㅑ of ㅣㅑㅗ); from the first horizontal vowel on, the rest
+        # takes the vowel's place under the initial (ㅗ; ㅗ+ㅣ as a cross 十)
+        k = next(i for i, t in enumerate(toks) if t in HOR)
+        lead, rest = toks[:k], toks[k:]
+        if all(t not in HOR for t in lead):
+            EXTRA[0] = lead
+            if len(rest) == 2 and rest[1] == "ㅣ" and rest[0] in "ㅗㅜ":
+                b = vbox("ㅜ")
+                f = FR.F([(0.5, 1), (0.5, 0), (0, 0.62), (1, 0.62)], [(0, 1), (2, 3)])
+                return V.index("ㅜ"), [(f, b)], b, None, 1, False
+            if all(t in HOR for t in rest) and len(rest) <= 2:
+                m = rest[0] if rest[0] in V and len(rest) == 1 else ("ㅡ" if rest == ["ㆍ"] else "ㅜ")
+                b = vbox(m)
+                ps = stack(rest, b, ybar()) if len(rest) == 2 else [jamo_part(rest[0], b)]
+                return V.index(m), ps, b, None, len(ps), False
+            EXTRA[0] = []
     pre, k = [], 0
     while k < len(toks) and toks[k] in HOR:
         pre.append(toks[k]); k += 1
@@ -505,6 +519,10 @@ def syllable(text, version="C"):
             left = min(p[1][0] for p in parts)
             both = [shift_x(p, left, right, left, CELL[2]) for p in parts + vparts]
             parts, vparts = both[:len(parts)], both[len(parts):]
+    if EXTRA[0]:
+        rx0 = min(p[1][0] for p in parts); rx1 = max(p[1][2] for p in parts)
+        hx0 = min(p[1][0] for p in vparts); hx1 = max(p[1][2] for p in vparts)
+        vparts = [shift_x(p, hx0, hx1, min(hx0, rx0), max(hx1, rx1)) for p in vparts]
     three = len(comps) >= 3 and not light
     if vc == 2 and nh and (len(comps) > 1 and not light or long_h):
         # under a cluster the vowel's horizontal part spans the whole cluster, and as far
