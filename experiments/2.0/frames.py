@@ -391,6 +391,8 @@ def unit_boxes(r):
         pts = [u(*r["points"][i]) for i in ids]
         frame = F(pts, [(ids.index(i), ids.index(j)) for i, j in ss],
                   [(*u(cx, cy), abs(rx) / w, abs(ry) / h) for cx, cy, rx, ry in rs])
+        # bends, as a share of the box's larger side
+        frame["b"] = [b / max(w, h) for b, o in zip(r["bends"], r["owner_s"]) if o == n]
         out.append((n, (x0 - PEN / 2, y0 - PEN / 2, x1 + PEN / 2, y1 + PEN / 2), frame))
     return out
 
@@ -400,7 +402,10 @@ def mean_frame(frames):
     f0 = frames[0]
     p = np.mean([np.array(f["p"], float).reshape(-1, 2) for f in frames], axis=0)
     r = np.mean([np.array(f["r"], float).reshape(-1, 4) for f in frames], axis=0)
-    return F([tuple(q) for q in p], list(f0["s"]), [tuple(q) for q in r])
+    out = F([tuple(q) for q in p], list(f0["s"]), [tuple(q) for q in r])
+    if all("b" in f for f in frames):
+        out["b"] = list(np.mean([f["b"] for f in frames], axis=0))
+    return out
 
 
 def fit(contours, name, sample=3):

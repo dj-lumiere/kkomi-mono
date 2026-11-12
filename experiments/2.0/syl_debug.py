@@ -29,5 +29,13 @@ for n, cp in enumerate(pick):
     for kk, (cx, cy, rx, ry) in enumerate(r["rings"]):
         rx, ry = abs(rx), abs(ry)
         a, b = T((cx - rx, cy + ry)), T((cx + rx, cy - ry)); d.ellipse([a, b], outline=COL[r["owner_r"][kk]], width=3)
+    for x, y in r.get("uncovered", []):
+        c = T((x, y)); d.ellipse([c[0] - 3, c[1] - 3, c[0] + 3, c[1] + 3], fill="black")
+    pa = r.get("piece_along")
+    if pa:
+        for kk, (i, j) in enumerate(r["strokes"]):
+            if pa[kk] > 25:
+                d.line([T(q) for q in FR.curve(r["points"][i], r["points"][j], r["bends"][kk])], fill="#f90", width=7)
+                d.line([T(q) for q in FR.curve(r["points"][i], r["points"][j], r["bends"][kk])], fill=COL[r["owner_s"][kk]], width=3)
     d.text((ox + 4, oy + 2), f"{chr(cp)} iou {r['iou']:.2f} a{r['along95']:.0f} c{r['cover95']:.0f}", fill="black")
 img.save(sys.argv[3] if len(sys.argv) > 3 else "syl_debug.png")

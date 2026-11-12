@@ -9,7 +9,7 @@ import numpy as np
 from scipy import ndimage
 from skimage.morphology import skeletonize
 from fontTools.ttLib import TTFont
-import make_mono as M, hangul_fill as H, frames as FR
+import make_mono as M, hangul_fill as H, frames as FR, skgraph as SG
 
 SRC = ROOT + "/source/KNPSKkomi.otf"
 NPTS = 300
@@ -40,7 +40,7 @@ def prep(cp):
     P = np.column_stack([off[0] + rc[:, 1], off[1] - rc[:, 0]]).astype(float)
     half = m[::2, ::2]
     return cp, {"P": P, "holes": holes_of(m, off), "off": off, "shape": half.shape,
-                "ink": np.packbits(half)}
+                "ink": np.packbits(half), "lines": SG.lines_of(m, off)["lines"]}
 
 
 if __name__ == "__main__":

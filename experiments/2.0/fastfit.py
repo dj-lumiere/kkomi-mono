@@ -97,7 +97,7 @@ class Frame:
         return k, t[idx, k], q[idx, k], dist[idx, k]
 
 
-def fit_syllable(prep, parts, bends=True, frames=None):
+def fit_syllable(prep, parts, bends=True, frames=None, match=True):
     """prep: from prep.py. parts = [(jamo name, role, ink box)]. frames: name -> frame
     (FR.FRAMES when not given)."""
     frames = frames or FR.FRAMES
@@ -108,13 +108,13 @@ def fit_syllable(prep, parts, bends=True, frames=None):
         units.append((len(whole["p"]), len(whole["p"]) + len(g["p"]), len(whole["r"]), len(whole["r"]) + len(g["r"])))
         whole = FR.join(whole, g)
         owner_p += [n] * len(g["p"]); owner_s += [n] * len(g["s"]); owner_r += [n] * len(g["r"])
-    out = fit_frame(prep, whole, units, bends, boxes=[b for _, _, b in parts])
+    out = fit_frame(prep, whole, units, bends, boxes=[b for _, _, b in parts], match=match)
     if out:
         out.update(strokes=[tuple(s) for s in whole["s"]], owner_p=owner_p, owner_s=owner_s, owner_r=owner_r)
     return out
 
 
-def fit_frame(prep, f, units, bends=True, boxes=None):
+def fit_frame(prep, f, units, bends=True, boxes=None, match=True):
     P = prep["P"]
     if len(P) < 5:
         return None
@@ -131,6 +131,7 @@ def fit_frame(prep, f, units, bends=True, boxes=None):
         unit_of[fr.ns + ra:fr.ns + rz] = u
     seg_unit = unit_of[fr.seg_piece]
     ALLOW = [None]          # which segments each skeleton point may go to, set by assign()
+    LOCK = [None]           # per skeleton point: the stroke its line was matched to, or -1
     inbox = None            # (n, units): the point lies in that jamo's starting box
     if boxes:
         inbox = np.column_stack([(b[0] - 30 < P[:, 0]) & (P[:, 0] < b[2] + 30) &
@@ -179,6 +180,9 @@ def fit_frame(prep, f, units, bends=True, boxes=None):
                 ok[np.argmax(share)] = True
             allowed_units[idx] = ok
         ALLOW[0] = allowed_units[:, seg_unit]
+        if LOCK[0] is not None:
+            locked = LOCK[0] >= 0
+            ALLOW[0][locked] = fr.seg_piece[None, :] == LOCK[0][locked][:, None]
         k, _, _, _ = fr.nearest_segment(P, S, ALLOW[0])
         own = fr.seg_piece[k]
         trees = []
@@ -243,6 +247,8 @@ def fit_frame(prep, f, units, bends=True, boxes=None):
     for u, (a, z, ra, rz) in enumerate(units):
         ring_box += [boxes[u] if boxes else None] * (rz - ra)
     rsA = on_holes(prep["holes"], rsA, ring_box)
+    if match and prep.get("lines"):
+        ptsA, LOCK[0] = match_lines(ptsA, fr.s, prep["lines"], P)
     gA = fr.g_of(ptsA, rsA, np.zeros(fr.ns))
 
     # 2. free points and rings, bends held at 0; 3. bends too
@@ -268,7 +274,67 @@ def fit_frame(prep, f, units, bends=True, boxes=None):
             "init": ([tuple(q) for q in ptsA], [tuple(q) for q in rsA]),
             "cover95": float(np.percentile(r[:n_cover], 95)),
             "along95": float(np.percentile(r[n_cover:n_cover + fr.nsamp], 95)),
-            "iou": iou(prep, pts_l, f["s"], rs_l, bl)}
+            "iou": iou(prep, pts_l, f["s"], rs_l, bl),
+            # for looking into failures: each piece's worst along, the skeleton left uncovered
+            "piece_along": [float(r[n_cover:n_cover + fr.nsamp][fr.samp_piece == pc].max()) for pc in range(fr.npieces)],
+            "uncovered": P[r[:n_cover] > 25].tolist()}
+
+
+def _poly_dist(X, Q):
+    """Distance from each point of X to the polyline Q."""
+    a = Q[:-1]; ab = Q[1:] - a
+    L2 = np.maximum((ab * ab).sum(1), 1e-9)
+    t = np.clip(((X[:, None, :] - a[None]) * ab[None]).sum(2) / L2[None], 0, 1)
+    q = a[None] + t[..., None] * ab[None]
+    return np.hypot(X[:, None, 0] - q[..., 0], X[:, None, 1] - q[..., 1]).min(axis=1)
+
+
+REJECT = 90.0     # a stroke whose best line costs more than this stays unmatched
+
+
+def match_lines(pts, strokes, lines, P):
+    """Frame strokes matched one for one to skeleton lines (Hungarian method; the cost is
+    the mean distance both ways). A matched stroke restarts on its line's ends (a point
+    shared by strokes takes the mean), and the skeleton points on its line are locked to
+    it when the two lengths are within a factor of two."""
+    from scipy.optimize import linear_sum_assignment
+    ns, nl = len(strokes), len(lines)
+    if not ns or not nl:
+        return pts, None
+    t = np.linspace(0, 1, 7)[:, None]
+    segs = [(pts[i], pts[j]) for i, j in strokes]
+    Ls = [l[np.linspace(0, len(l) - 1, 10).astype(int)] for l in lines]
+    cost = np.full((ns, nl + ns), REJECT)
+    for k, (a, b) in enumerate(segs):
+        S = a + t * (b - a)
+        seg = np.vstack([a, b])
+        for l in range(nl):
+            cost[k, l] = _poly_dist(S, lines[l]).mean() + _poly_dist(Ls[l], seg).mean()
+    rows, cols = linear_sum_assignment(cost)
+    cand = [[] for _ in pts]
+    line_of = {}
+    for k, l in zip(rows, cols):
+        if l >= nl:
+            continue
+        (i, j), (a, b) = strokes[k], segs[k]
+        c, d = lines[l][0], lines[l][-1]
+        if np.hypot(*(a - c)) + np.hypot(*(b - d)) > np.hypot(*(a - d)) + np.hypot(*(b - c)):
+            c, d = d, c
+        cand[i].append(c); cand[j].append(d)
+        la = np.hypot(*(b - a)); ll = float(np.hypot(*np.diff(lines[l], axis=0).T).sum())
+        if 0.5 < ll / max(la, 1) < 2.0:
+            line_of[l] = k
+    new = pts.copy()
+    for i, cs in enumerate(cand):
+        if cs:
+            new[i] = np.mean(cs, axis=0)
+    lock = np.full(len(P), -1)
+    D = np.column_stack([_poly_dist(P, l) for l in lines])
+    near = D.argmin(axis=1)
+    for p in range(len(P)):
+        if D[p, near[p]] < 4 and near[p] in line_of:
+            lock[p] = line_of[near[p]]
+    return new, lock
 
 
 def components(prep, P):

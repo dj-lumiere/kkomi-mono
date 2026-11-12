@@ -9,7 +9,7 @@ import numpy as np
 SPLIT, PREP, ARG, OUT = sys.argv[1:5]
 sys.argv = ["syl_fit.py", SPLIT, "1", OUT] + sys.argv[5:6]
 exec(open(__import__("os").path.join(__import__("os").path.dirname(__import__("os").path.abspath(__file__)), "syl_fit.py")).read().split("def " + "job(cp):")[0])
-import fastfit as FF   # frames.py, syl_fit.py and fastfit.py sit next to this file
+import fastfit as FF
 PR = pickle.load(open(PREP, "rb"))
 
 
@@ -64,6 +64,12 @@ def job(cp):
         parts = parts_of(cp)
         best = FF.fit_syllable(PR[cp], parts)
         if FR.good(best):
+            return cp, best
+        r = FF.fit_syllable(PR[cp], parts, match=False)     # without the line matching
+        if score(r) < score(best):
+            best = r
+        if FR.good(best):
+            best["tries"] = True
             return cp, best
         rng = np.random.default_rng(cp)
         tries = [(parts, FR.TEMPLATE)]
