@@ -90,7 +90,7 @@ def job(cp):
 
 
 if __name__ == "__main__":
-    cps = sorted(PR)
+    cps = sorted(k for k in PR if isinstance(k, int))
     cps = cps[::int(ARG)] if ARG.isdigit() else [ord(c) for c in ARG if ord(c) in PR]
     t0 = time.time()
     with Pool(6) as pool:
