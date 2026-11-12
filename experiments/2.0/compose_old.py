@@ -100,6 +100,8 @@ def gap_to_vowel(comps, light):
 def jamo_parts(j, var, b):
     """A component's parts in box b. ㆆ is its bar over a ㅇ ring, 35 units apart, so the
     two never run together in a low box."""
+    if j == "ㅣ":
+        return [(FR.FRAMES["ㅣ"], flat("ㅣ", b))]
     if j != "ㆆ":
         return [(frame_of(j, var), b)]
     x0, y0, x1, y1 = b
@@ -201,7 +203,14 @@ def initial_parts(ch, v, hf, version, vb, vx0=None, hard=False):
     """The initial's parts and its right end (the vowel moves if this passes its start)."""
     vc = H.vowel_class(v)
     comps, light = parse(ch)
-    sbox = lambda j: box(("I", I.index(BOXOF.get(j, j)), v, hf), ("I", I.index(BOXOF.get(j, j)), vc, hf), ("I*", vc, hf))
+    sbox0 = lambda j: box(("I", I.index(BOXOF.get(j, j)), v, hf), ("I", I.index(BOXOF.get(j, j)), vc, hf), ("I*", vc, hf))
+    if EXTRA[0] and not light:
+        comps = comps + [(e, None) for e in EXTRA[0]]
+    def sbox(j):
+        if j == "ㅣ":                    # a vowel standing in the row: a stem as tall as the first consonant
+            f = sbox0(comps[0][0])
+            return (0, f[1], PEN + 50, f[3])
+        return sbox0(j)
     if light:
         j, var = comps[0]
         top, low = light_boxes(sbox(j), version)
@@ -217,7 +226,7 @@ def initial_parts(ch, v, hf, version, vb, vx0=None, hard=False):
     # can move; above a mixed vowel (ㅙ) it cannot, and the initial is narrowed instead
     right = (vx0 - gap_to_vowel(comps, light)) if vx0 is not None else CELL[2]
     region = widen(region, singles, len(comps), CELL[0] + 20, right, centred=False)
-    boxes, end = place_row(region, comps, singles, [MINW.get(("I", BOXOF.get(j, j)), 0) for j, _ in comps],
+    boxes, end = place_row(region, comps, singles, [MINW.get(("I", BOXOF.get(j, j)), PEN + 30) for j, _ in comps],
                            CELL[0] + 20, right, hard=hard)
     return [q for (j, var), b in zip(comps, boxes) for q in jamo_parts(j, var, b)], end
 
@@ -323,6 +332,7 @@ def stack(hs, b, dot_y=None):
 
 
 STYLE = ["C"]        # the current item's style, set by syllable()
+EXTRA = [[]]         # vowels written in the initial's row (the first ㅣ of ㅣㅗㅣ)
 
 
 def vowel_layout(ch, hf, double):
@@ -342,15 +352,18 @@ def vowel_layout(ch, hf, double):
             hb, vb2 = group_box(mf, b, gh), group_box(mf, b, gv)
             return V.index(m), [(sub_frame(mf, gh), hb), (sub_frame(mf, gv), vb2)], b, vb2[0], 1, False
         return V.index(m), [(FR.FRAMES[m], b)], b, (b[0] if H.vowel_class(V.index(m)) == 0 else None), 0, False
-    if toks in (["ㅗ", "ㅗ", "ㅣ"], ["ㅣ", "ㅗ", "ㅣ"]):
-        # written as one column like ‡ (a stem crossed by two short bars), or for ㅣㅗㅣ
-        # in the "two" style two stems crossed by one bar
-        b = vbox("ㅐ")
-        if STYLE[0] == "two":
-            f = FR.F([(0.25, 1), (0.25, 0), (0.75, 1), (0.75, 0), (0, 0.5), (1, 0.5)], [(0, 1), (2, 3), (4, 5)])
-        else:
-            f = FR.F([(0.5, 1), (0.5, 0), (0, 0.62), (1, 0.62), (0, 0.38), (1, 0.38)], [(0, 1), (2, 3), (4, 5)])
-        return V.index("ㅐ"), [(f, b)], b, b[0], 0, False
+    if toks == ["ㅗ", "ㅗ", "ㅣ"]:
+        # ‡ in ㅗ's place, under the initial: one stem crossed by two bars
+        b = vbox("ㅜ")
+        f = FR.F([(0.5, 1), (0.5, 0), (0.1, 0.72), (0.9, 0.72), (0, 0.36), (1, 0.36)], [(0, 1), (2, 3), (4, 5)])
+        return V.index("ㅜ"), [(f, b)], b, None, 1, False
+    if toks == ["ㅣ", "ㅗ", "ㅣ"]:
+        # the first ㅣ stands in the initial's row as if a consonant; ㅗ and the last ㅣ
+        # make a cross (十) in ㅗ's place under it
+        EXTRA[0] = ["ㅣ"]
+        b = vbox("ㅜ")
+        f = FR.F([(0.5, 1), (0.5, 0), (0, 0.62), (1, 0.62)], [(0, 1), (2, 3)])
+        return V.index("ㅜ"), [(f, b)], b, None, 1, False
     pre, k = [], 0
     while k < len(toks) and toks[k] in HOR:
         pre.append(toks[k]); k += 1
@@ -457,6 +470,7 @@ def syllable(text, version="C"):
     comps, light = parse(Lc)
     double = len(comps) > 1 and not light
     STYLE[0] = version
+    EXTRA[0] = []
     v, vparts, vb, vx0, nh, long_h = vowel_layout(Vc, hf, double)
     vx0_first = vx0
     G = gap_to_vowel(comps, light)
@@ -580,7 +594,7 @@ ROWS = [
     ("세로 + 세로", [("ᄀᆘ",), ("ᄀᆙ",), ("ᄀᆥ",), ("ᄀힾ",), ("ᄀힿ",), ("ᄀퟀ",), ("ᄀퟄ",), ("ᄢᆘᆰ",), ("ᄡᆥᇌ",), ("ᄣힾᆪ",), ("ᄩퟄᆯ",)]),
     ("셋", [("ᄀힽ",), ("ᄀퟁ",), ("ᄀᆋ",), ("ᄀힱ",), ("ᄀힶ",), ("ᄢힽᇌ",), ("ᄣퟁᆰ",), ("ᄡᆋᆯ",), ("ᄢힱᆪ",), ("ᄣힶᇌ",)]),
     ("ㅗㅗ, ㅜㅜ (土)", [("ᄀᆂ",), ("ᄀᆍ",), ("ᄆᆂᆷ",), ("ᄃᆍᆯ",), ("ᄀᆃ",), ("ᄀᆖ",)]),
-    ("ㅗㅗㅣ, ㅣㅗㅣ (‡)", [("ᄀힱ",), ("ᄢힱᆪ",), ("ᄆힱᆫ",), ("ᄀퟁ",), ("ᄣퟁᆰ",), ("ᄀퟁ", "two"), ("ᄣퟁᆰ", "two")]),
+    ("ㅗㅗㅣ ‡, ㅣㅗㅣ 十", [("ᄀힱ",), ("ᄢힱᆪ",), ("ᄆힱᆫ",), ("ᄀퟁ",), ("ᄣퟁᆰ",), ("ᄆퟁᆫ",), ("ᄡퟁ",)]),
     ("여린히읗", [("ㅎㅏ",), ("ᅙᅡ",), ("ᅙᅵ",), ("ᅙᅩ",), ("ᅙᅳᆼ",), ("ᄒᆞᇙ",), ("마ᇙ",), ("ᅙᅥᆫ",)]),
 ]
 
