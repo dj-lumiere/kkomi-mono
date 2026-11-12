@@ -369,6 +369,53 @@ def fit_frame(contours, f, sample=3, units=None):
             "along95": float(np.percentile(r[n_cover:], 95)), "iou": float(iou)}
 
 
+def _segs_cross(a, b, c, d):
+    """Segments ab and cd cross properly (not just touch at an end)."""
+    def orient(p, q, r):
+        return (q[0] - p[0]) * (r[1] - p[1]) - (q[1] - p[1]) * (r[0] - p[0])
+    o1, o2, o3, o4 = orient(a, b, c), orient(a, b, d), orient(c, d, a), orient(c, d, b)
+    return (o1 > 0) != (o2 > 0) and (o3 > 0) != (o4 > 0) and min(abs(o1), abs(o2), abs(o3), abs(o4)) > 1e-6
+
+
+def crossings(points, strokes, bends=None, unit_of=None, trim=0.08):
+    """Per unit, how many pairs of its strokes cross. Each stroke is trimmed by `trim` of
+    its length at both ends, so strokes meeting at a corner or a branch do not count."""
+    out = {}
+    curves = []
+    for k, (i, j) in enumerate(strokes):
+        Q = curve(points[i], points[j], bends[k] if bends is not None else 0.0, n=12)
+        n = len(Q); cut = max(1, int(round(trim * (n - 1))))
+        curves.append(Q[cut:n - cut])
+    for x in range(len(strokes)):
+        for y in range(x + 1, len(strokes)):
+            u = unit_of[x] if unit_of is not None else 0
+            if unit_of is not None and unit_of[y] != u:
+                continue
+            A, B = curves[x], curves[y]
+            hit = any(_segs_cross(A[i], A[i + 1], B[j], B[j + 1]) for i in range(len(A) - 1) for j in range(len(B) - 1))
+            out[u] = out.get(u, 0) + int(hit)
+    return out
+
+
+TEMPLATE_CROSS = {}
+
+
+def template_crossings(name):
+    """How many crossing stroke pairs the jamo's hand-made frame has (ㅊ, ㅍ ... may have some)."""
+    if name not in TEMPLATE_CROSS:
+        f = TEMPLATE[name]
+        TEMPLATE_CROSS[name] = crossings(np.array(f["p"], float) * 1000, f["s"]).get(0, 0)
+    return TEMPLATE_CROSS[name]
+
+
+def twisted(r, names):
+    """Units of a syllable fit whose strokes cross more than their frame's do."""
+    if not r or "strokes" not in r:
+        return []
+    c = crossings(np.array(r["points"]), r["strokes"], r["bends"], r["owner_s"])
+    return [u for u, n in c.items() if n > template_crossings(names[u])]
+
+
 def good(r):
     """A fit holds when the frame and the skeleton are within 25 units of each other
     (95th percentile both ways). IoU depends on the one pen width, so it only informs."""

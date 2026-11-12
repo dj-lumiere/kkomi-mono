@@ -53,35 +53,43 @@ def parts_of(cp):
     return parts
 
 
-def score(r):
-    return r["cover95"] + r["along95"] if r and "cover95" in r else 1e9
+def names_of(cp):
+    i, v, f = H.decompose(cp)
+    return [I[i], V[v]] + ([F[f]] if f else [])
+
+
+def ok(r, names):
+    """Fits by distance, and no jamo's strokes cross where its frame's do not."""
+    return FR.good(r) and not FR.twisted(r, names)
+
+
+def score(r, names):
+    if not r or "cover95" not in r:
+        return 1e9
+    return r["cover95"] + r["along95"] + 100 * len(FR.twisted(r, names))
 
 
 def job(cp):
-    """One fit; when it fails, more starts (the hand-made frames, and boxes moved at
-    random by up to 40 units) and the best of them."""
+    """One fit; when it fails (or a jamo is twisted), more starts: without the line
+    matching, the hand-made frames, and boxes moved at random by up to 40 units. The
+    best of them, a twisted one counting as much worse."""
     try:
+        names = names_of(cp)
         parts = parts_of(cp)
         best = FF.fit_syllable(PR[cp], parts)
-        if FR.good(best):
-            return cp, best
-        r = FF.fit_syllable(PR[cp], parts, match=False)     # without the line matching
-        if score(r) < score(best):
-            best = r
-        if FR.good(best):
-            best["tries"] = True
+        if ok(best, names):
             return cp, best
         rng = np.random.default_rng(cp)
-        tries = [(parts, FR.TEMPLATE)]
-        for _ in range(4):
+        tries = [(parts, None, False), (parts, FR.TEMPLATE, True)]
+        for _ in range(6):
             tries.append(([(n, ro, tuple(np.array(b) + np.repeat(rng.uniform(-40, 40, 2), 2) * (1, 1, 1, 1)
                                          + rng.uniform(-15, 15, 4)))
-                           for n, ro, b in parts], None))
-        for p, frames in tries:
-            r = FF.fit_syllable(PR[cp], p, frames=frames)
-            if score(r) < score(best):
+                           for n, ro, b in parts], None, True))
+        for p, frames, match in tries:
+            r = FF.fit_syllable(PR[cp], p, frames=frames, match=match)
+            if score(r, names) < score(best, names):
                 best = r
-            if FR.good(best):
+            if ok(best, names):
                 break
         best["tries"] = True
         return cp, best
@@ -96,13 +104,12 @@ if __name__ == "__main__":
     with Pool(6) as pool:
         res = dict(pool.imap_unordered(job, cps, chunksize=2))
     print(f"{len(res)} syllables in {time.time() - t0:.1f}s")
-    good = FR.good
-    ok = sum(good(r) for r in res.values())
-    print(f"fit {ok}/{len(res)} = {ok/len(res):.2f}  IoU median {np.median([r['iou'] for r in res.values() if r and 'iou' in r]):.3f}")
+    n_ok = sum(ok(r, names_of(cp)) for cp, r in res.items())
+    print(f"fit {n_ok}/{len(res)} = {n_ok/len(res):.2f}  IoU median {np.median([r['iou'] for r in res.values() if r and 'iou' in r]):.3f}")
     for role_idx, names in ((0, I), (1, V)):
         by = collections.defaultdict(list)
         for cp, r in res.items():
-            by[names[H.decompose(cp)[role_idx]]].append(good(r))
+            by[names[H.decompose(cp)[role_idx]]].append(ok(r, names_of(cp)))
         print("by", "초성" if role_idx == 0 else "중성", sorted(((round(sum(x)/len(x), 2), k, len(x)) for k, x in by.items()))[:8])
     print("errors", [r["error"] for r in res.values() if r and "error" in r][:3])
     pickle.dump(res, open(OUT, "wb"))

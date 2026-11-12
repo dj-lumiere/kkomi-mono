@@ -153,7 +153,16 @@ def place_row(region, comps, singles, mins, lo, hi, hard=False):
     right end, which may pass hi: the caller makes room (moves the vowel)."""
     x0, y0, x1, y1 = region
     white = 10 if len(comps) >= 3 else 35       # three consonants keep their size, not their white
-    gaps = [(-35 if a[0] in SLANT and b[0] in SLANT else white) for a, b in zip(comps, comps[1:])]
+
+    def gap(a, b):
+        if a[0] in SLANT and b[0] in SLANT:
+            return -35                          # two slanted ones interlock
+        if a[0] in V and b[0] in V:
+            return white + 5                    # vowels standing in the row (ㅣ ㅑ of ㅣㅑㅗ)
+        if len(comps) >= 3 and a[0] in SLANT and b[0] not in V:
+            return -20                          # ㅅ's open upper right takes the next one in
+        return white
+    gaps = [gap(a, b) for a, b in zip(comps, comps[1:])]
     ws = np.array([s[2] - s[0] for s in singles], float)
     room = (x1 - x0) - sum(gaps)
     widths = np.maximum(room * ws / ws.sum(), np.array(mins, float))
@@ -521,6 +530,12 @@ def syllable(text, version="C"):
         vparts = vparts[:nh] + cols
         parts, end = initial_parts(Lc, v, hf, version, vb, vx0, hard=True)
     ROLES[:] = ["I"] * len(parts)
+    if end > CELL[2]:
+        # a row that passes the cell's right side (five in a row: ㅂㅅㄱ + ㅣㅑ) is pressed
+        # across to fit
+        ix0 = min(p[1][0] for p in parts)
+        parts = [shift_x(p, ix0, end, ix0, CELL[2]) for p in parts]
+        end = CELL[2]
     if vc == 0 and end + G > vx0:
         # the initial needs more room: the vowel moves right as it is, and when the two
         # then pass the cell, both are narrowed together by one factor
