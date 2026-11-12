@@ -322,6 +322,9 @@ def stack(hs, b, dot_y=None):
     return [jamo_part(hs[0], (b[0], mid + 18, b[2], b[3])), jamo_part(hs[1], (b[0], b[1], b[2], mid - 18))]
 
 
+STYLE = ["C"]        # the current item's style, set by syllable()
+
+
 def vowel_layout(ch, hf, double):
     """(modern vowel index that sets the layout, the vowel's parts, its box, where its
     vertical part starts or None).
@@ -339,6 +342,15 @@ def vowel_layout(ch, hf, double):
             hb, vb2 = group_box(mf, b, gh), group_box(mf, b, gv)
             return V.index(m), [(sub_frame(mf, gh), hb), (sub_frame(mf, gv), vb2)], b, vb2[0], 1, False
         return V.index(m), [(FR.FRAMES[m], b)], b, (b[0] if H.vowel_class(V.index(m)) == 0 else None), 0, False
+    if toks in (["ㅗ", "ㅗ", "ㅣ"], ["ㅣ", "ㅗ", "ㅣ"]):
+        # written as one column like ‡ (a stem crossed by two short bars), or for ㅣㅗㅣ
+        # in the "two" style two stems crossed by one bar
+        b = vbox("ㅐ")
+        if STYLE[0] == "two":
+            f = FR.F([(0.25, 1), (0.25, 0), (0.75, 1), (0.75, 0), (0, 0.5), (1, 0.5)], [(0, 1), (2, 3), (4, 5)])
+        else:
+            f = FR.F([(0.5, 1), (0.5, 0), (0, 0.62), (1, 0.62), (0, 0.38), (1, 0.38)], [(0, 1), (2, 3), (4, 5)])
+        return V.index("ㅐ"), [(f, b)], b, b[0], 0, False
     pre, k = [], 0
     while k < len(toks) and toks[k] in HOR:
         pre.append(toks[k]); k += 1
@@ -444,6 +456,7 @@ def syllable(text, version="C"):
     Lc = L if "CHOSEONG" in unicodedata.name(L) else chr(0x1100 + I.index(L))
     comps, light = parse(Lc)
     double = len(comps) > 1 and not light
+    STYLE[0] = version
     v, vparts, vb, vx0, nh, long_h = vowel_layout(Vc, hf, double)
     vx0_first = vx0
     G = gap_to_vowel(comps, light)
@@ -566,7 +579,8 @@ ROWS = [
     ("세로 + 가로, 복잡", [("ᄣᅶᆰ",), ("ᄡᆚᆪ",), ("ᄢᅻᆶ",), ("ᄧᆜᇌ",), ("ᄩᅽᆲ",), ("ᄡᆝᆯ",), ("ᄫᆛᆫ",), ("ᄣퟃᆰ",)]),
     ("세로 + 세로", [("ᄀᆘ",), ("ᄀᆙ",), ("ᄀᆥ",), ("ᄀힾ",), ("ᄀힿ",), ("ᄀퟀ",), ("ᄀퟄ",), ("ᄢᆘᆰ",), ("ᄡᆥᇌ",), ("ᄣힾᆪ",), ("ᄩퟄᆯ",)]),
     ("셋", [("ᄀힽ",), ("ᄀퟁ",), ("ᄀᆋ",), ("ᄀힱ",), ("ᄀힶ",), ("ᄢힽᇌ",), ("ᄣퟁᆰ",), ("ᄡᆋᆯ",), ("ᄢힱᆪ",), ("ᄣힶᇌ",)]),
-    ("ㅗㅗ, ㅜㅜ (土)", [("ᄀᆂ",), ("ᄀᆍ",), ("ᄆᆂᆷ",), ("ᄃᆍᆯ",), ("ᄀힱ",), ("ᄢힱᆪ",), ("ᄀᆃ",), ("ᄀᆖ",)]),
+    ("ㅗㅗ, ㅜㅜ (土)", [("ᄀᆂ",), ("ᄀᆍ",), ("ᄆᆂᆷ",), ("ᄃᆍᆯ",), ("ᄀᆃ",), ("ᄀᆖ",)]),
+    ("ㅗㅗㅣ, ㅣㅗㅣ (‡)", [("ᄀힱ",), ("ᄢힱᆪ",), ("ᄆힱᆫ",), ("ᄀퟁ",), ("ᄣퟁᆰ",), ("ᄀퟁ", "two"), ("ᄣퟁᆰ", "two")]),
     ("여린히읗", [("ㅎㅏ",), ("ᅙᅡ",), ("ᅙᅵ",), ("ᅙᅩ",), ("ᅙᅳᆼ",), ("ᄒᆞᇙ",), ("마ᇙ",), ("ᅙᅥᆫ",)]),
 ]
 
