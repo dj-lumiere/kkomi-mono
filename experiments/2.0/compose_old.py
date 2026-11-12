@@ -368,11 +368,21 @@ def vowel_layout(ch, hf, double):
                                                       "ㅜ": "ㅞ" if stems >= 2 else "ㅝ"}.get(fam, "ㅢ" if bare else "ㅝ")
         b = vbox(model); gh, gv = GROUPS[model]; mf = FR.FRAMES[model]
         hb = group_box(mf, b, gh); region = group_box(mf, b, gv)
-        top_h = hb[3] if fam != "ㅜ" else (hb[1] + hb[3]) / 2
-        region = (region[0], max(region[1], top_h + 30), region[2], region[3])
-        hparts = stack(hs[:2], (hb[0], hb[1], region[2], hb[3]), ybar())
         cols = [[vt, []] for vt, _ in cols]
-        lay_long = True
+        if len(cols) > 1 or stems >= 2:
+            # two columns (ퟁ ㅣ+ㅗ+ㅣ): they keep their full height, the horizontal vowel
+            # runs under the initial and across the first column (as Nanum Yet Hangul does)
+            hparts = stack(hs[:2], (hb[0], hb[1], max(hb[2], region[0] + 0.5 * (region[2] - region[0]) / len(cols)), hb[3]), ybar())
+        elif hs == ["ㆍ"]:
+            # ㆍ after a vertical vowel (ᆝ): a dot under the stem, the stem ending above it
+            dot = 2 * 0.8 * PEN
+            region = (region[0], region[1] + dot + 30, region[2], region[3])
+            hparts = [("dot_under", (region[0], region[1] - dot - 30, region[2], region[1] - 30))]
+        else:
+            top_h = hb[3] if fam != "ㅜ" else (hb[1] + hb[3]) / 2
+            region = (region[0], max(region[1], top_h + 30), region[2], region[3])
+            hparts = stack(hs[:2], (hb[0], hb[1], region[2], hb[3]), ybar())
+            lay_long = True
     else:
         model = "ㅐ" if stems >= 2 or len(cols) > 1 else cols[0][0]
         b = vbox(model); hparts = []
@@ -396,6 +406,16 @@ def vowel_layout(ch, hf, double):
         else:
             parts.append((FR.FRAMES[vt], flat(vt, cb)))
         x += cw + 40
+    for k, q in enumerate(parts):
+        if q[0] == "dot_under":
+            col = parts[-1][1]
+            cx = (col[0] + col[2]) / 2
+            if vowel_tokens(ch)[0] != "ㅣ":
+                g = FR.in_box(parts[-1][0], col)
+                cx = max(g["p"], key=lambda t: -t[1])[0]       # the stem's lowest point
+            dot = 2 * 0.8 * PEN
+            y1 = q[1][3]
+            parts[k] = ("dot", (cx - dot / 2, y1 - dot, cx + dot / 2, y1))
     lay = V.index(model)
     whole = (min(p[1][0] for p in parts), y0 if not pre else b[1], max(p[1][2] for p in parts), y1)
     return lay, parts, whole, x0, len(hparts), lay_long
