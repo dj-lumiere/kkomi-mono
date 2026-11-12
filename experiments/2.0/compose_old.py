@@ -577,6 +577,40 @@ def syllable(text, version="C"):
             f = lambda y: nbot + (y - fbot) * (ntop - nbot) / max(ftop - fbot, 1)
             fp = [(q[0], (q[1][0], f(q[1][1]), q[1][2], f(q[1][3]))) for q in fp]
         parts += fp; ROLES.extend(["F"] * len(fp))
+    vs = [k for k, r in enumerate(ROLES) if r == "V"]
+    if vs and all(parts[k][0] == "dot" for k in vs):
+        # a vowel of dots only (ᆞ ᆢ): the dots sit midway between the initial and the
+        # final with 30 units of white each way; when there is no such room the final
+        # moves down
+        d = 2 * 0.8 * PEN
+        ibot = min(parts[k][1][1] for k, r in enumerate(ROLES) if r == "I")
+        fs = [k for k, r in enumerate(ROLES) if r == "F"]
+        if fs:
+            ftop = max(parts[k][1][3] for k in fs)
+            short = d + 60 - (ibot - ftop)
+            if short > 0:
+                # the final moves down as far as the cell's floor, at most half the shortfall;
+                # the initial's lower part gives the rest
+                fbot = min(parts[k][1][1] for k in fs)
+                down = min(short / 2, max(fbot - CELL[1], 0))
+                up = short - down
+                for k in fs:
+                    q = parts[k]
+                    parts[k] = (q[0], (q[1][0], q[1][1] - down, q[1][2], q[1][3] - down))
+                ftop -= down
+                ins = [k for k, r in enumerate(ROLES) if r == "I"]
+                itop = max(parts[k][1][3] for k in ins)
+                g = lambda y: itop + (y - itop) * (itop - ibot - up) / max(itop - ibot, 1)
+                for k in ins:
+                    q = parts[k]
+                    parts[k] = (q[0], (q[1][0], g(q[1][1]), q[1][2], g(q[1][3])))
+                ibot += up
+            cy = (ibot + ftop) / 2
+        else:
+            cy = ibot - 30 - d / 2
+        for k in vs:
+            q = parts[k]
+            parts[k] = (q[0], (q[1][0], cy - 1, q[1][2], cy + 1))
     return parts
 
 
