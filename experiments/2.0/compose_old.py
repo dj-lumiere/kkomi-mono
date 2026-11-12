@@ -534,7 +534,9 @@ def syllable(text, version="C"):
         moved = (vx0 - vx0_first) if vx0 is not None else 0
         cr = max(p[1][2] for p in vparts[nh:]) if len(vparts) > nh else hx1
         nx0 = min(hx0, ix0)
-        nx1 = cr if (long_h or three) else hx1 + max(moved, 0)
+        # drawn long it stops at the first vertical stroke: running on between two stems
+        # it would read as ㅐ's middle bar (ㅜㅣㅣ as ㅜㅐ)
+        nx1 = cr if long_h else (vx0 + PEN if three else hx1 + max(moved, 0))
         vparts = [shift_x(p, hx0, hx1, nx0, nx1) for p in vparts[:nh]] + vparts[nh:]
     parts += vparts; ROLES.extend(["V"] * len(vparts))
     if T:
