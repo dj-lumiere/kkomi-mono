@@ -93,9 +93,8 @@ def yeorin():
 
 def gap_to_vowel(comps, light):
     """White between the initial and the vowel's vertical part: 30 as in modern syllables,
-    60 beside a cluster, so the last consonant of the cluster does not read as one
-    syllable with the vowel."""
-    return 60 if len(comps) > 1 and not light else 30
+    15 beside a cluster (written close, so the cluster keeps its size)."""
+    return 15 if len(comps) > 1 and not light else 30
 
 
 def jamo_parts(j, var, b):
@@ -266,8 +265,21 @@ def vowel_tokens(ch):
     return out
 
 
+def flat(j, b):
+    """ㅡ and ㅣ are one stroke whose frame has almost no height (width): set in a box of
+    their own pen width, in the middle of b, so the box's other side does not tilt them."""
+    x0, y0, x1, y1 = b
+    if j == "ㅡ":
+        c = (y0 + y1) / 2
+        return (x0, c - PEN / 2 - 4, x1, c + PEN / 2 + 4)
+    if j == "ㅣ":
+        c = (x0 + x1) / 2
+        return (c - PEN / 2 - 4, y0, c + PEN / 2 + 4, y1)
+    return b
+
+
 def jamo_part(j, b):
-    return ("dot", b) if j == "ㆍ" else (FR.FRAMES[j], b)
+    return ("dot", b) if j == "ㆍ" else (FR.FRAMES[j], flat(j, b))
 
 
 def sub_frame(frame, strokes):
@@ -317,8 +329,8 @@ def vowel_layout(ch, hf, double):
             gh, gv = GROUPS[m]
             mf = FR.FRAMES[m]
             hb, vb2 = group_box(mf, b, gh), group_box(mf, b, gv)
-            return V.index(m), [(sub_frame(mf, gh), hb), (sub_frame(mf, gv), vb2)], b, vb2[0], 1
-        return V.index(m), [(FR.FRAMES[m], b)], b, (b[0] if H.vowel_class(V.index(m)) == 0 else None), 0
+            return V.index(m), [(sub_frame(mf, gh), hb), (sub_frame(mf, gv), vb2)], b, vb2[0], 1, False
+        return V.index(m), [(FR.FRAMES[m], b)], b, (b[0] if H.vowel_class(V.index(m)) == 0 else None), 0, False
     pre, k = [], 0
     while k < len(toks) and toks[k] in HOR:
         pre.append(toks[k]); k += 1
@@ -331,11 +343,12 @@ def vowel_layout(ch, hf, double):
     if not cols:
         if pre == ["ㆍ"]:
             b = vbox("ㅡ")
-            return V.index("ㅡ"), [("dot", b)], b, None, 1
+            return V.index("ㅡ"), [("dot", b)], b, None, 1, False
         b = vbox("ㅜ")
         hs = stack(pre, b, ybar())
-        return V.index("ㅜ"), hs, b, None, len(hs)
+        return V.index("ㅜ"), hs, b, None, len(hs), False
     stems = sum(2 if c[0] in TWO else 1 for c in cols)
+    lay_long = False
     if pre:
         fam = "ㅗ" if pre[0] in "ㅗㅛ" else "ㅜ" if pre[0] in "ㅜㅠ" else "ㅡ"
         bare = len(cols) == 1 and cols[0][0] == "ㅣ" and not cols[0][1]
@@ -344,6 +357,22 @@ def vowel_layout(ch, hf, double):
         b = vbox(model); gh, gv = GROUPS[model]; mf = FR.FRAMES[model]
         hparts = stack(pre, group_box(mf, b, gh), ybar())
         region = group_box(mf, b, gv)
+    elif any(h for _, h in cols):
+        # a vertical vowel then a horizontal one (ᅶ ㅏ+ㅗ): laid out as the modern mixed
+        # vowel of that pair (ㅘ), with the horizontal vowel drawn long, under the vertical
+        # one too, and the vertical one ending above it
+        hs = [h for _, hang in cols for h in hang]
+        fam = "ㅗ" if hs[0] in "ㅗㅛ" else "ㅜ" if hs[0] in "ㅜㅠ" else "ㅡ"
+        bare = len(cols) == 1 and cols[0][0] == "ㅣ"
+        model = MODEL.get((fam, stems >= 2, bare)) or {"ㅗ": "ㅙ" if stems >= 2 else "ㅘ",
+                                                      "ㅜ": "ㅞ" if stems >= 2 else "ㅝ"}.get(fam, "ㅢ" if bare else "ㅝ")
+        b = vbox(model); gh, gv = GROUPS[model]; mf = FR.FRAMES[model]
+        hb = group_box(mf, b, gh); region = group_box(mf, b, gv)
+        top_h = hb[3] if fam != "ㅜ" else (hb[1] + hb[3]) / 2
+        region = (region[0], max(region[1], top_h + 30), region[2], region[3])
+        hparts = stack(hs[:2], (hb[0], hb[1], region[2], hb[3]), ybar())
+        cols = [[vt, []] for vt, _ in cols]
+        lay_long = True
     else:
         model = "ㅐ" if stems >= 2 or len(cols) > 1 else cols[0][0]
         b = vbox(model); hparts = []
@@ -362,14 +391,14 @@ def vowel_layout(ch, hf, double):
         if hang:
             hh = (y1 - y0) * (0.36 if hang[0] in "ㅗㅛㅜㅠ" else 0.2)
             hw = max(cw, 240)
-            parts.append((FR.FRAMES[vt], (cb[0], y0 + hh + 30, cb[2], y1)))
+            parts.append((FR.FRAMES[vt], flat(vt, (cb[0], y0 + hh + 30, cb[2], y1))))
             parts += stack(hang, (cb[2] - hw, y0, cb[2], y0 + hh))
         else:
-            parts.append((FR.FRAMES[vt], cb))
+            parts.append((FR.FRAMES[vt], flat(vt, cb)))
         x += cw + 40
     lay = V.index(model)
     whole = (min(p[1][0] for p in parts), y0 if not pre else b[1], max(p[1][2] for p in parts), y1)
-    return lay, parts, whole, x0, len(hparts)
+    return lay, parts, whole, x0, len(hparts), lay_long
 
 
 def shift_x(part, x0, x1, nx0, nx1):
@@ -387,7 +416,7 @@ def syllable(text, version="C"):
     Lc = L if "CHOSEONG" in unicodedata.name(L) else chr(0x1100 + I.index(L))
     comps, light = parse(Lc)
     double = len(comps) > 1 and not light
-    v, vparts, vb, vx0, nh = vowel_layout(Vc, hf, double)
+    v, vparts, vb, vx0, nh, long_h = vowel_layout(Vc, hf, double)
     vx0_first = vx0
     G = gap_to_vowel(comps, light)
     vc = H.vowel_class(v)
@@ -421,13 +450,18 @@ def syllable(text, version="C"):
             left = min(p[1][0] for p in parts)
             both = [shift_x(p, left, right, left, CELL[2]) for p in parts + vparts]
             parts, vparts = both[:len(parts)], both[len(parts):]
-    if vc == 2 and nh and len(comps) > 1 and not light:
+    three = len(comps) >= 3 and not light
+    if vc == 2 and nh and (len(comps) > 1 and not light or long_h):
         # under a cluster the vowel's horizontal part spans the whole cluster, and as far
-        # right as the vertical part moved, so the syllable reads as one
+        # right as the vertical part moved, so the syllable reads as one. Drawn long (a
+        # vertical-first vowel, or three initials) it runs on under the vertical part:
+        # the initial reads as the consonant, the long vowel as its vowel
         hx0 = min(p[1][0] for p in vparts[:nh]); hx1 = max(p[1][2] for p in vparts[:nh])
         ix0 = min(p[1][0] for p in parts)
         moved = (vx0 - vx0_first) if vx0 is not None else 0
-        nx0, nx1 = min(hx0, ix0), hx1 + max(moved, 0)
+        cr = max(p[1][2] for p in vparts[nh:]) if len(vparts) > nh else hx1
+        nx0 = min(hx0, ix0)
+        nx1 = cr if (long_h or three) else hx1 + max(moved, 0)
         vparts = [shift_x(p, hx0, hx1, nx0, nx1) for p in vparts[:nh]] + vparts[nh:]
     parts += vparts; ROLES.extend(["V"] * len(vparts))
     if T:
