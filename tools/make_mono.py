@@ -106,6 +106,10 @@ KEEP_RANGES = [(0x2500, 0x259F), (0x2800, 0x28FF), (0xE0A0, 0xE0B3)]
 # cells keep their width (a Hangul syllable stays exactly 1 em), so the letters gain
 # height only: at the same font size they stand as tall as in other coding fonts.
 TALL = 1.15
+# The one-cell glyphs (Latin, digits, symbols, the operator ligatures) are drawn this much
+# taller again, so beside Hangul they do not look small: a capital stands about 0.77 of a
+# syllable's height instead of 0.70. Hangul and other wide glyphs keep TALL alone.
+HALF_TALL = 1.10
 # Alternate glyphs turned on by a feature: tag -> [(glyph, alternate)]. The build adds
 # to it before the features are written.
 ALTERNATES = {}

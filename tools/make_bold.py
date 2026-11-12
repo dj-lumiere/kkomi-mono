@@ -8,8 +8,8 @@ than upright ones, so counters stay open. Glyphs that must meet the cell edges (
 drawing, blocks, braille, Powerline) are left as they are: thicker, they would spill
 out of the cell.
 
-The weights aim at a stem of about 12.5 percent of the cap height for Regular (400)
-and 17.5 percent for Bold (700).
+The weights give a stem of about 10.5 percent of the cap height for Regular (400) and
+14 percent for Bold (700), the same stroke in Latin and Hangul.
 
 The finished font is hinted with ttfautohint, so strokes line up with the pixels at
 small sizes on Windows. The letters below U+2000 (Latin, Greek, Cyrillic and the
@@ -77,6 +77,16 @@ def main():
     os2.fsSelection = (os2.fsSelection & ~0x61) | (0x01 if italic else 0) | (0x20 if bold else 0) \
         | (0x40 if not (bold or italic) else 0)
     font["head"].macStyle = (0x01 if bold else 0) | (0x02 if italic else 0)
+    # Line spacing from the typo metrics on every system (bit 7, USE_TYPO_METRICS, needs
+    # OS/2 version 4), so the win metrics can cover the tallest and deepest glyphs: Windows
+    # clips what lies beyond them (accented capitals above, the deep finals of Hangul below).
+    if os2.version < 4:
+        os2.version = 4
+    os2.fsSelection |= 0x80
+    glyf_bounds = [(glyf[n].yMin, glyf[n].yMax) for n in font.getGlyphOrder()
+                   if hasattr(glyf[n], "yMax") and glyf[n].numberOfContours]
+    os2.usWinAscent = max(os2.sTypoAscender, max(b[1] for b in glyf_bounds))
+    os2.usWinDescent = max(-os2.sTypoDescender, -min(b[0] for b in glyf_bounds))
     ps_style = style.replace(" ", "")
     for rec in font["name"].names:
         text = rec.toUnicode()

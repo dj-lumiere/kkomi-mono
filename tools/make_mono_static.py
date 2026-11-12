@@ -460,6 +460,46 @@ def to_tt_glyph(ops):
     return glyph
 
 
+def stretch_half(font, k):
+    """Every glyph but the wide ones (Hangul, kana, CJK, and unmapped glyphs two cells wide
+    that are not operator ligatures) and the ones that must meet the cell edges made k
+    times taller on the baseline, flat strokes thinned back as stretch_tall does. Then the
+    cap height and x-height are read off H and x."""
+    import unicodedata
+    gs = font.getGlyphSet()
+    cmap = font.getBestCmap()
+    glyf, hmtx = font["glyf"], font["hmtx"]
+    cps = {}
+    for cp, name in cmap.items():
+        cps.setdefault(name, []).append(cp)
+    hy = M.bounds(M.record(gs, cmap[ord("-")]))
+    thin = (hy[3] - hy[1]) * (k - 1)
+    keep = {n for cp, n in cmap.items() if any(a <= cp <= b for a, b in M.KEEP_RANGES)}
+    ligatures = {n for n, _ in M.LIGATURES} | set(M.FROM_SYMBOL)
+
+    def wide(name):
+        if name in cps:
+            return any(unicodedata.east_asian_width(chr(cp)) in "WF" for cp in cps[name])
+        return hmtx[name][0] == M.WIDE and name not in ligatures
+
+    drawn = {}
+    for name in font.getGlyphOrder():
+        if name in keep or wide(name):
+            continue
+        ops = M.record(gs, name)
+        if not M.bounds(ops):
+            continue
+        drawn[name] = embolden(M.transformed(ops, 1.0, 0.0, k, 0.0), 0.0, -thin)
+    for name, ops in drawn.items():
+        glyf[name] = to_tt_glyph_quadratic(ops)
+        glyf[name].recalcBounds(glyf)
+        hmtx[name] = (hmtx[name][0], getattr(glyf[name], "xMin", 0) if glyf[name].numberOfContours else 0)
+    os2 = font["OS/2"]
+    os2.sCapHeight = round(glyf[cmap[ord("H")]].yMax)
+    os2.sxHeight = round(glyf[cmap[ord("x")]].yMax)
+    return len(drawn)
+
+
 def stretch_tall(font, k):
     """Every glyph made k times taller, standing on the baseline, and its flat strokes
     thinned back to their width: stretching thickens them by k, the upright strokes
@@ -692,6 +732,7 @@ def main():
             text = rec.toUnicode()
             if not text.endswith(suffix):
                 rec.string = text + suffix
+    print(f"half-width glyphs made taller: {stretch_half(font, M.HALF_TALL)}")
     stretch_tall(font, M.TALL)
     # after the stretch, so the rounded turns come out as circles, not ellipses
     rounded = symbols.round_kana(font, to_tt_glyph_quadratic, embolden)
