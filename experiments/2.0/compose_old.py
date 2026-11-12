@@ -173,6 +173,7 @@ def syllable(text, version="A"):
     double = len(comps) > 1 and not light
     v, model, how, vb = vowel_parts(Vm, hf, double)
     parts = initial_parts(Lc, v, hf, version, vb)[0]
+    ROLES[:] = ["I"] * len(parts)
     vf = FR.FRAMES[model]
     if how == "dot":
         parts.append(("dot", vb))
@@ -180,21 +181,40 @@ def syllable(text, version="A"):
         vf = dict(vf); parts.append(("dot", vb, vf))
     else:
         parts.append((vf, vb))
+    ROLES.append("V")
     if T:
         Tc = T if "JONGSEONG" in unicodedata.name(T) else chr(0x11A7 + F.index(T))
-        parts += final_parts(Tc, v)
+        fp = final_parts(Tc, v)
+        parts += fp; ROLES.extend(["F"] * len(fp))
     return parts
 
 
+ROLES = []
+CELL = (13, -153, 844, 819)      # where 98% of the designer's syllables put their ink
+TOP = 900
+GRID_COL = {"I": (230, 120, 120), "V": (110, 150, 230), "F": (100, 180, 110)}
+
+
+def draw_grid(d, parts, ox, oy, k):
+    """The cell (grey) and each part's box (initial red, vowel blue, final green)."""
+    T = lambda p: (ox + p[0] * k, oy + (TOP - p[1]) * k)
+    a, b = T((CELL[0], CELL[3])), T((CELL[2], CELL[1]))
+    d.rectangle([a, b], outline=(185, 185, 185), width=1)
+    for part, role in zip(parts, ROLES):
+        bx = part[1]
+        a, b = T((bx[0], bx[3])), T((bx[2], bx[1]))
+        d.rectangle([a, b], outline=GRID_COL[role], width=1)
+
+
 def draw_parts(d, parts, ox, oy, k):
-    T = lambda p: (ox + p[0] * k, oy + (900 - p[1]) * k)
+    T = lambda p: (ox + p[0] * k, oy + (TOP - p[1]) * k)
     w = PEN * k; r = w / 2
 
     def stroke(a, b, bend):
         Q = [T(q) for q in FR.curve(a, b, bend, n=12)]
-        d.line(Q, fill=0, width=int(round(w)), joint="curve")
+        d.line(Q, fill=(0, 0, 0), width=int(round(w)), joint="curve")
         for c in (Q[0], Q[-1]):
-            d.ellipse([c[0] - r, c[1] - r, c[0] + r, c[1] + r], fill=0)
+            d.ellipse([c[0] - r, c[1] - r, c[0] + r, c[1] + r], fill=(0, 0, 0))
 
     for part in parts:
         if part[0] == "dot":
@@ -208,7 +228,7 @@ def draw_parts(d, parts, ox, oy, k):
             else:
                 c = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
             cc = T(c); rr = PEN * 0.8 * k
-            d.ellipse([cc[0] - rr, cc[1] - rr, cc[0] + rr, cc[1] + rr], fill=0)
+            d.ellipse([cc[0] - rr, cc[1] - rr, cc[0] + rr, cc[1] + rr], fill=(0, 0, 0))
             continue
         frame, b = part
         g = FR.in_box(frame, b)
@@ -218,16 +238,16 @@ def draw_parts(d, parts, ox, oy, k):
             stroke(g["p"][i], g["p"][j], bs[kk] * size if kk < len(bs) else 0)
         for cx, cy, rx, ry in g["r"]:
             c = T((cx, cy)); ax, ay = abs(rx) * k, abs(ry) * k
-            d.ellipse([c[0] - ax - r, c[1] - ay - r, c[0] + ax + r, c[1] + ay + r], fill=0)
+            d.ellipse([c[0] - ax - r, c[1] - ay - r, c[0] + ax + r, c[1] + ay + r], fill=(0, 0, 0))
             if ax > r and ay > r:
-                d.ellipse([c[0] - ax + r, c[1] - ay + r, c[0] + ax - r, c[1] + ay - r], fill=255)
+                d.ellipse([c[0] - ax + r, c[1] - ay + r, c[0] + ax - r, c[1] + ay - r], fill=(255, 255, 255))
 
 
 def original(d, ch, ox, oy, k):
     from fontTools.ttLib import TTFont
     tt = TTFont(SRC); gs, cmap = tt.getGlyphSet(), tt.getBestCmap()
     for poly in M.polygon_points(M.flattened(M.record(gs, cmap[ord(ch)]))):
-        d.polygon([(ox + x * k, oy + (900 - y) * k) for x, y in poly], fill=0 if M.signed_area(poly) > 0 else 255)
+        d.polygon([(ox + x * k, oy + (TOP - y) * k) for x, y in poly], fill=(0, 0, 0) if M.signed_area(poly) > 0 else (255, 255, 255))
 
 
 ROWS = [
@@ -247,13 +267,19 @@ def main():
     """One image per row: SHEET with _0, _1, ... before the extension."""
     k = float(os.environ.get("SCALE", "0.11")); cell = int(1000 * k)
     for r, (title, items) in enumerate(ROWS):
-        img = Image.new("L", (cell * len(items) + 12, int(1000 * k) + 12), 255)
+        img = Image.new("RGB", (cell * len(items) + 12, int(1150 * k) + 12), "white")
         d = ImageDraw.Draw(img)
         for c, it in enumerate(items):
             ox, oy = 6 + c * cell, 6
             if it[0] == "orig" or len(it[0]) == 1:
+                if os.environ.get("GRID"):
+                    a, b = (ox + CELL[0] * k, oy + (TOP - CELL[3]) * k), (ox + CELL[2] * k, oy + (TOP - CELL[1]) * k)
+                    d.rectangle([a, b], outline=(185, 185, 185), width=1)
                 original(d, it[-1] if it[0] == "orig" else it[0], ox, oy, k); continue
-            draw_parts(d, syllable(it[0], it[1] if len(it) > 1 else "A"), ox, oy, k)
+            parts = syllable(it[0], it[1] if len(it) > 1 else "A")
+            if os.environ.get("GRID"):
+                draw_grid(d, parts, ox, oy, k)
+            draw_parts(d, parts, ox, oy, k)
         base, ext = os.path.splitext(SHEET)
         img.save(f"{base}_{r}{ext}")
 
