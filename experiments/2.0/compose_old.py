@@ -28,7 +28,7 @@ NAME = {"KIYEOK": "ㄱ", "NIEUN": "ㄴ", "TIKEUT": "ㄷ", "RIEUL": "ㄹ", "MIEUM
         "IEUNG": "ㅇ", "CIEUC": "ㅈ", "CHIEUCH": "ㅊ", "KHIEUKH": "ㅋ", "THIEUTH": "ㅌ", "PHIEUPH": "ㅍ", "HIEUH": "ㅎ",
         "YEORINHIEUH": "ㆆ"}
 SLANT = set("ㅅㅈㅊ")
-BOXOF = {"ㆆ": "ㅎ"}      # a jamo without its own fits takes the boxes of this one
+BOXOF = {"ㆆ": "ㅇ"}      # a jamo without its own fits takes the boxes of this one
 DOUBLE_OF_FIRST = {"ㄱ": 1, "ㄷ": 4, "ㅂ": 8, "ㅅ": 10, "ㅈ": 13}
 PEN = FR.PEN
 ROLES = []
@@ -98,8 +98,8 @@ def gap_to_vowel(comps, light):
 
 
 def jamo_parts(j, var, b):
-    """A component's parts in box b. ㆆ is its bar over a ㅇ ring, 35 units apart, so the
-    two never run together in a low box."""
+    """A component's parts in box b. ㆆ takes ㅇ's box: the ring pressed down to make room,
+    a bar over it, 30 units apart."""
     if j == "ㅣ":
         return [(FR.FRAMES["ㅣ"], flat("ㅣ", b))]
     if j in V:
@@ -108,8 +108,8 @@ def jamo_parts(j, var, b):
         return [(frame_of(j, var), b)]
     x0, y0, x1, y1 = b
     w = x1 - x0
-    bar = (x0 + 0.05 * w, y1 - PEN, x1 - 0.05 * w, y1)
-    ring = (x0 + 0.12 * w, y0, x1 - 0.12 * w, y1 - PEN - 35)
+    bar = (x0, y1 - PEN, x1, y1)
+    ring = (x0, y0, x1, y1 - PEN - 30)
     return [(FR.chain((0, 0.5), (1, 0.5)), bar), (FR.FRAMES["ㅇ"], ring)]
 
 
