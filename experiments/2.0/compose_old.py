@@ -29,6 +29,9 @@ NAME = {"KIYEOK": "ㄱ", "NIEUN": "ㄴ", "TIKEUT": "ㄷ", "RIEUL": "ㄹ", "MIEUM
 SLANT = set("ㅅㅈㅊ")
 DOUBLE_OF_FIRST = {"ㄱ": 1, "ㄷ": 4, "ㅂ": 8, "ㅅ": 10, "ㅈ": 13}
 PEN = FR.PEN
+ROLES = []
+CELL = (13, -153, 844, 819)      # where 98% of the designer's syllables put their ink
+TOP = 900
 
 
 def parse(ch):
@@ -74,19 +77,51 @@ def frame_of(jamo, var=None):
     return variant(FR.FRAMES[jamo], jamo, var)
 
 
-def place_row(region, comps, singles, touch=False):
-    """Boxes for components side by side in region. touch: no white between them
-    (three initials are written touching)."""
+def _min_widths():
+    """The narrowest each jamo is drawn (5th percentile of its box widths over the good
+    fits, inside clusters as well): a component is never made narrower, so a ㅂ keeps
+    its inner white."""
+    import pickle, collections
+    import cluster_measure as CM
+    res = pickle.load(open(FITS, "rb"))
+    ws = collections.defaultdict(list)
+    for cp, r in res.items():
+        if not FR.good(r):
+            continue
+        i, v, f = H.decompose(cp)
+        for n, (role, name) in enumerate([("I", I[i]), ("V", V[v])] + ([("F", F[f])] if f else [])):
+            pts, rs = CM.unit_parts(r, n)
+            if role != "V" and name in CM.PAIR:
+                a, b = CM.PAIR[name]
+                na, ra = len(FR.TEMPLATE[a]["p"]), len(FR.TEMPLATE[a]["r"])
+                for j, p, q in ((a, pts[:na], rs[:ra]), (b, pts[na:], rs[ra:])):
+                    bx = CM.box_of(p, q); ws[(role, j)].append(bx[2] - bx[0])
+            else:
+                bx = CM.box_of(pts, rs); ws[(role, name)].append(bx[2] - bx[0])
+    return {k: float(np.percentile(x, 5)) for k, x in ws.items()}
+
+
+MINW = _min_widths()
+
+
+def place_row(region, comps, singles, mins, lo, hi):
+    """Boxes for components side by side, starting at the region's left. Widths are the
+    region shared in proportion to the singles' widths, but never under `mins`; when that
+    makes the row longer it moves left (not past lo). Returns the boxes and the row's
+    right end, which may pass hi: the caller makes room (moves the vowel)."""
     x0, y0, x1, y1 = region
-    gaps = [(-35 if a[0] in SLANT and b[0] in SLANT else (0 if touch else 35)) for a, b in zip(comps, comps[1:])]
-    ws = np.array([s[2] - s[0] for s in singles])
+    gaps = [(-35 if a[0] in SLANT and b[0] in SLANT else 35) for a, b in zip(comps, comps[1:])]
+    ws = np.array([s[2] - s[0] for s in singles], float)
     room = (x1 - x0) - sum(gaps)
-    widths = room * ws / ws.sum()
+    widths = np.maximum(room * ws / ws.sum(), np.array(mins, float))
+    total = widths.sum() + sum(gaps)
+    if x0 + total > hi:
+        x0 = max(lo, hi - total)
     out, x = [], x0
     for k, s in enumerate(singles):
         out.append((x, s[1], x + widths[k], s[3]))
         x += widths[k] + (gaps[k] if k < len(gaps) else 0)
-    return out
+    return out, x0 + total
 
 
 def widen(region, singles, n, lo, hi, centred):
@@ -111,32 +146,34 @@ def light_boxes(region, version):
     """The consonant over a small ㅇ: version A halves the height, B gives ㅇ a third,
     C (the one chosen) splits it 60:40."""
     x0, y0, x1, y1 = region
-    H = y1 - y0
+    Hh = y1 - y0
     share = {"A": 0.5, "B": 1 / 3}.get(version, 0.4)     # the ring's share of the height
-    ring = (H - 35) * share
-    ring = max(ring, PEN * 1.6)
+    ring = max((Hh - 35) * share, PEN * 1.6)
     cx = (x0 + x1) / 2
     return (x0, y0 + ring + 35, x1, y1), (cx - ring / 2, y0, cx + ring / 2, y0 + ring)
 
 
-def initial_parts(ch, v, hf, version="C", vb=None):
+def initial_parts(ch, v, hf, version, vb):
+    """The initial's parts and its right end (the vowel moves if this passes its start)."""
     vc = H.vowel_class(v)
     comps, light = parse(ch)
     sbox = lambda j: box(("I", I.index(j), v, hf), ("I", I.index(j), vc, hf), ("I*", vc, hf))
     if light:
         j, var = comps[0]
         top, low = light_boxes(sbox(j), version)
-        return [(frame_of(j, var), top), (FR.FRAMES["ㅇ"], low)], False
+        return [(frame_of(j, var), top), (FR.FRAMES["ㅇ"], low)], top[2]
     if len(comps) == 1:
         j, var = comps[0]
-        return [(frame_of(j, var), sbox(j))], False
+        b = sbox(j)
+        return [(frame_of(j, var), b)], b[2]
     d = DOUBLE_OF_FIRST.get(comps[0][0], 1)
     region = box(("I", d, v, hf), ("I", d, vc, hf), ("I", 1, v, hf), ("I", 1, vc, hf))
     singles = [sbox(j) for j, _ in comps]
-    right = (vb[0] - 30) if vc == 0 else 960      # a vowel on the right stops the initial
-    region = widen(region, singles, len(comps), 40, right, centred=False)
-    boxes = place_row(region, comps, singles, touch=len(comps) >= 3)
-    return [(frame_of(j, var), b) for (j, var), b in zip(comps, boxes)], True
+    right = (vb[0] - 30) if vc == 0 else CELL[2]      # a vowel on the right stops the initial
+    region = widen(region, singles, len(comps), CELL[0] + 20, right, centred=False)
+    boxes, end = place_row(region, comps, singles, [MINW.get(("I", j), 0) for j, _ in comps],
+                           CELL[0] + 20, right)
+    return [(frame_of(j, var), b) for (j, var), b in zip(comps, boxes)], end
 
 
 def final_parts(ch, v):
@@ -147,22 +184,84 @@ def final_parts(ch, v):
         return [(frame_of(comps[0][0]), sbox(comps[0][0]))]
     region = box(("F", 9, v), ("F", 9, vc), ("F*", vc))
     singles = [sbox(j) for j, _ in comps]
-    region = widen(region, singles, len(comps), 40, 960, centred=True)
-    boxes = place_row(region, comps, singles)
+    region = widen(region, singles, len(comps), CELL[0] + 20, CELL[2] - 20, centred=True)
+    boxes, _ = place_row(region, comps, singles, [MINW.get(("F", j), 0) for j, _ in comps],
+                         CELL[0] + 20, CELL[2] - 20)
     return [(frame_of(j, var), b) for (j, var), b in zip(comps, boxes)]
 
 
-OLD_VOWEL = {"ᆞ": ("ㅡ", "dot"), "ᆡ": ("ㅢ", "dotbar")}
+# vowels -------------------------------------------------------------------------
+VTOK = {"A": "ㅏ", "AE": "ㅐ", "YA": "ㅑ", "YAE": "ㅒ", "EO": "ㅓ", "E": "ㅔ", "YEO": "ㅕ", "YE": "ㅖ",
+        "O": "ㅗ", "YO": "ㅛ", "U": "ㅜ", "YU": "ㅠ", "EU": "ㅡ", "YI": "ㅢ", "I": "ㅣ", "ARAEA": "ㆍ",
+        "WA": "ㅘ", "WAE": "ㅙ", "OE": "ㅚ", "WEO": "ㅝ", "WE": "ㅞ", "WI": "ㅟ"}
+HOR = set("ㅗㅛㅜㅠㅡㆍ")
+TWO = set("ㅐㅒㅔㅖ")
+# a modern compound vowel lending its layout: (horizontal family, two stems, bare ㅣ)
+MODEL = {("ㅗ", False, False): "ㅘ", ("ㅗ", True, False): "ㅙ", ("ㅗ", False, True): "ㅚ",
+         ("ㅜ", False, False): "ㅝ", ("ㅜ", True, False): "ㅞ", ("ㅜ", False, True): "ㅟ",
+         ("ㅡ", False, True): "ㅢ"}
+# its strokes: the horizontal part, the vertical part
+GROUPS = {"ㅘ": ([0, 1], [2, 3]), "ㅙ": ([0, 1], [2, 3, 4]), "ㅚ": ([0, 1], [2]),
+          "ㅝ": ([0, 1], [2, 3]), "ㅞ": ([0, 1], [2, 3, 4]), "ㅟ": ([0, 1], [2]), "ㅢ": ([0], [1])}
 
 
-def vowel_parts(ch, hf, double):
-    if ch in OLD_VOWEL:
-        model, how = OLD_VOWEL[ch]
-    else:
-        model, how = ch, None
-    v = V.index(unicodedata.normalize("NFKC", model)) if model not in V else V.index(model)
-    b = box(("V", v, hf, double), ("V", v, hf), ("V", v, not hf))
-    return v, model, how, b
+def vowel_tokens(ch):
+    if ch in V:
+        return [ch]
+    out = []
+    for t in unicodedata.name(ch).split(" ", 2)[2].split("-"):
+        out += [VTOK[t[5:]]] * 2 if t.startswith("SSANG") else [VTOK[t]]
+    return out
+
+
+def jamo_part(j, b):
+    return ("dot", b) if j == "ㆍ" else (FR.FRAMES[j], b)
+
+
+def group_box(frame, vb, strokes):
+    g = FR.in_box(frame, vb)
+    pts = np.array([g["p"][i] for k in strokes for i in g["s"][k]])
+    return (pts[:, 0].min() - PEN / 2, pts[:, 1].min() - PEN / 2, pts[:, 0].max() + PEN / 2, pts[:, 1].max() + PEN / 2)
+
+
+def vowel_layout(ch, hf, double):
+    """(modern vowel index that sets the layout, the vowel's parts, its whole box)."""
+    toks = vowel_tokens(ch)
+    vbox = lambda m: box(("V", V.index(m), hf, double), ("V", V.index(m), hf), ("V", V.index(m), not hf))
+    if len(toks) == 1 and toks[0] in V:
+        m = toks[0]; b = vbox(m)
+        return V.index(m), [(FR.FRAMES[m], b)], b
+    if toks == ["ㆍ"]:
+        b = vbox("ㅡ")
+        return V.index("ㅡ"), [("dot", b)], b
+    if len(toks) == 2 and toks[0] in HOR and toks[1] not in HOR:
+        h, vt = toks
+        fam = "ㅗ" if h in "ㅗㅛ" else "ㅜ" if h in "ㅜㅠ" else "ㅡ" if vt == "ㅣ" else "ㅜ"
+        model = MODEL.get((fam, vt in TWO, vt == "ㅣ"), "ㅝ")
+        b = vbox(model)
+        gh, gv = GROUPS[model]
+        mf = FR.FRAMES[model]
+        return V.index(model), [jamo_part(h, group_box(mf, b, gh)), jamo_part(vt, group_box(mf, b, gv))], b
+    if len(toks) == 2 and toks[0] in HOR and toks[1] in HOR:
+        # two horizontal vowels stacked in ㅜ's place: the first above, the second below
+        b = vbox("ㅜ")
+        mid = (b[1] + b[3]) / 2
+        up, low = (b[0], mid + 18, b[2], b[3]), (b[0], b[1], b[2], mid - 18)
+        dot = 2 * 0.8 * PEN
+        if toks == ["ㆍ", "ㆍ"] and mid - 18 - b[1] < dot:
+            # no room for two dots one over the other: side by side, like ‥
+            cx, cy = (b[0] + b[2]) / 2, mid
+            return V.index("ㅜ"), [("dot", (cx - dot - 10, cy - 1, cx - 10, cy + 1)),
+                                    ("dot", (cx + 10, cy - 1, cx + dot + 10, cy + 1))], b
+        return V.index("ㅜ"), [jamo_part(toks[0], up), jamo_part(toks[1], low)], b
+    raise ValueError(f"vowel layout not made yet: {ch} {toks}")
+
+
+def shift_x(part, x0, x1, nx0, nx1):
+    """A vowel part moved from x0..x1 to nx0..nx1."""
+    f = lambda x: nx0 + (x - x0) * (nx1 - nx0) / max(x1 - x0, 1)
+    b = part[1]
+    return (part[0], (f(b[0]), b[1], f(b[2]), b[3]))
 
 
 def syllable(text, version="C"):
@@ -171,21 +270,22 @@ def syllable(text, version="C"):
     T = text[2] if len(text) > 2 else None
     hf = T is not None
     Lc = L if "CHOSEONG" in unicodedata.name(L) else chr(0x1100 + I.index(L))
-    Vm = Vc if Vc in OLD_VOWEL else (Vc if Vc in V else V[ord(Vc) - 0x1161])
-    # a vowel box depends on whether the initial is a cluster
     comps, light = parse(Lc)
     double = len(comps) > 1 and not light
-    v, model, how, vb = vowel_parts(Vm, hf, double)
-    parts = initial_parts(Lc, v, hf, version, vb)[0]
+    v, vparts, vb = vowel_layout(Vc, hf, double)
+    parts, end = initial_parts(Lc, v, hf, version, vb)
     ROLES[:] = ["I"] * len(parts)
-    vf = FR.FRAMES[model]
-    if how == "dot":
-        parts.append(("dot", vb))
-    elif how == "dotbar":
-        vf = dict(vf); parts.append(("dot", vb, vf))
-    else:
-        parts.append((vf, vb))
-    ROLES.append("V")
+    if H.vowel_class(v) == 0 and end + 30 > vb[0]:
+        # the initial needs more room: the vowel moves right as it is, and when the two
+        # then pass the cell, both are narrowed together by one factor
+        dx = end + 30 - vb[0]
+        vparts = [shift_x(p, vb[0], vb[2], vb[0] + dx, vb[2] + dx) for p in vparts]
+        right = vb[2] + dx
+        if right > CELL[2]:
+            left = min(p[1][0] for p in parts)
+            both = [shift_x(p, left, right, left, CELL[2]) for p in parts + vparts]
+            parts, vparts = both[:len(parts)], both[len(parts):]
+    parts += vparts; ROLES.extend(["V"] * len(vparts))
     if T:
         Tc = T if "JONGSEONG" in unicodedata.name(T) else chr(0x11A7 + F.index(T))
         fp = final_parts(Tc, v)
@@ -193,9 +293,6 @@ def syllable(text, version="C"):
     return parts
 
 
-ROLES = []
-CELL = (13, -153, 844, 819)      # where 98% of the designer's syllables put their ink
-TOP = 900
 GRID_COL = {"I": (230, 120, 120), "V": (110, 150, 230), "F": (100, 180, 110)}
 
 
@@ -223,14 +320,7 @@ def draw_parts(d, parts, ox, oy, k):
     for part in parts:
         if part[0] == "dot":
             b = part[1]
-            if len(part) == 3:                 # ㅢ with its bar turned into a dot
-                g = FR.in_box(part[2], b)
-                (i, j) = g["s"][0]
-                c = (np.array(g["p"][i]) + np.array(g["p"][j])) / 2
-                for kk, (i, j) in enumerate(g["s"][1:], 1):
-                    stroke(g["p"][i], g["p"][j], 0)
-            else:
-                c = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
+            c = ((b[0] + b[2]) / 2, (b[1] + b[3]) / 2)
             cc = T(c); rr = PEN * 0.8 * k
             d.ellipse([cc[0] - rr, cc[1] - rr, cc[0] + rr, cc[1] + rr], fill=(0, 0, 0))
             continue
@@ -257,12 +347,14 @@ def original(d, ch, ox, oy, k):
 ROWS = [
     ("현대 글자 확인: 원본 | 조합", [("orig", "쌀"), ("ㅆㅏㄹ",), ("orig", "꿈"), ("ㄲㅜㅁ",), ("orig", "땀"), ("ㄸㅏㅁ",),
                                   ("orig", "시"), ("ㅅㅣ",), ("orig", "짜"), ("ㅉㅏ",), ("orig", "닭"), ("ㄷㅏㄺ",)]),
-    ("원본 | 조합: 쁠 쓸", [("orig", "쁠"), ("ㅃㅡㄹ",), ("orig", "쓸"), ("ㅆㅡㄹ",)]),
     ("2개, 3개 묶음", [("ᄡᆞᆯ",), ("ᄢᅳᆷ",), ("ᄣᅢ",), ("ᄠᅳᆮ",), ("ᄧᅡ",), ("ᄢᅮᆯ",), ("ᄃᆞᇌ",), ("ᄡᅵ",), ("ᄩᅥ",)]),
     ("연서 (60:40)", [("ᄫᅵ",), ("가",), ("ᄫᆡ",), ("ᄝᅵ",), ("ᅗᅥ",), ("ᄫᅳᆯ",), ("ᄫᅡᆫ",)]),
-    ("치두 / 정치: ㅅ ᄼ ᄾ  ㅈ ᅎ ᅐ  ㅊ ᅔ ᅕ", [("ㅅㅣ",), ("ᄼᅵ",), ("ᄾᅵ",), ("ㅈㅏ",), ("ᅎᅡ",), ("ᅐᅡ",),
-                                          ("ㅊㅣ",), ("ᅔᅵ",), ("ᅕᅵ",)]),
-    ("쌍: ㅆ ᄽ ᄿ  ㅉ ᅏ ᅑ", [("ㅆㅣ",), ("ᄽᅵ",), ("ᄿᅵ",), ("ㅉㅏ",), ("ᅏᅡ",), ("ᅑᅡ",)]),
+    ("치두 / 정치", [("ㅅㅣ",), ("ᄼᅵ",), ("ᄾᅵ",), ("ㅈㅏ",), ("ᅎᅡ",), ("ᅐᅡ",), ("ㅊㅣ",), ("ᅔᅵ",), ("ᅕᅵ",)]),
+    ("쌍 치두 / 정치", [("ㅆㅣ",), ("ᄽᅵ",), ("ᄿᅵ",), ("ㅉㅏ",), ("ᅏᅡ",), ("ᅑᅡ",)]),
+    ("복잡한 현대 글자: 원본 | 조합", [("orig", "빪"), ("ㅃㅏㄻ",), ("orig", "짧"), ("ㅉㅏㄼ",), ("orig", "뿕"), ("ㅃㅜㄺ",), ("orig", "뚫"), ("ㄸㅜㅀ",), ("orig", "떫"), ("ㄸㅓㄼ",), ("orig", "뷁"), ("ㅂㅞㄺ",), ("orig", "괢"), ("ㄱㅙㄻ",)]),
+    ("복잡한 옛한글", [("ᄢᅫᇌ",), ("ᄣᆀᆪ",), ("ᄩᆒᇌ",), ("ᄡᆢᆰ",), ("ᄫᆔᆶ",), ("ᄧᆈᆲ",), ("ᄢᆢᇌ",), ("ᄣᆄᆳ",), ("ᄣᅢ",), ("ᄢᅳᆷ",)]),
+    ("겹모음 (가로 + 세로)", [("ᄀᆀ",), ("ᄀᆁ",), ("ᄀᆄ",), ("ᄀᆅ",), ("ᄀᆆ",), ("ᄀᆈ",), ("ᄀᆉ",), ("ᄀᆊ",), ("ᄀᆌ",), ("ᄀᆎ",), ("ᄀᆏ",), ("ᄀᆐ",), ("ᄀᆑ",), ("ᄀᆒ",), ("ᄀᆔ",), ("ᄀᆟ",), ("ᄀᆡ",)]),
+    ("겹모음 (가로 + 가로)", [("ᄀᆂ",), ("ᄀᆃ",), ("ᄀᆇ",), ("ᄀᆍ",), ("ᄀᆓ",), ("ᄀᆕ",), ("ᄀᆖ",), ("ᄀᆢ",), ("ᄀᆢᆫ",), ("ᄀᆖᆯ",), ("ᄆᆃᆷ",)]),
 ]
 
 
