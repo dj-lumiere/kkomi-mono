@@ -591,6 +591,27 @@ def label(d, it, x, y, w, font):
             d.text((x + font.size * 1.4 + k * sw, yy), t, fill=(0, 0, 0) if k < len(slots) else (190, 190, 190), font=font)
 
 
+# reference fonts: NanumMyeongjo-YetHangul.ttf and NanumBarunGothic-YetHangul.ttf (OFL) in
+# the folder NANUM_DIR, shaped with libraqm; without NANUM_DIR no reference rows
+REFS = ["NanumMyeongjo-YetHangul.ttf", "NanumBarunGothic-YetHangul.ttf"]
+
+
+def as_text(it):
+    """The syllable as text a font can shape: precomposed if modern, else conjoining jamo."""
+    if it[0] == "orig":
+        return it[1]
+    t = it[0]
+    if len(t) == 1:
+        return t
+    if all(not ("CHOSEONG" in unicodedata.name(c) or "JUNGSEONG" in unicodedata.name(c) or
+                "JONGSEONG" in unicodedata.name(c)) for c in t if not 0xAC00 <= ord(c) <= 0xD7A3):
+        if all(c in I or c in V or c in F for c in t):       # modern, written in compatibility jamo
+            i, v = I.index(t[0]), V.index(t[1])
+            f = F.index(t[2]) if len(t) > 2 else 0
+            return chr(0xAC00 + (i * 21 + v) * 28 + f)
+    return unicodedata.normalize("NFD", t)
+
+
 def main():
     """One image per row: SHEET with _0, _1, ... before the extension. Under each syllable
     its slots (초성 1-3, 중성 1-3, 종성 1-3)."""
@@ -613,6 +634,21 @@ def main():
             draw_parts(d, parts, ox, oy, k)
         if n > 1:
             img = img.resize((img.size[0] // n, img.size[1] // n), Image.LANCZOS)
+        refs = os.environ.get("NANUM_DIR")
+        if refs:
+            em = cell / n
+            fonts = [ImageFont.truetype(os.path.join(refs, f), int(em * 0.9), layout_engine=ImageFont.Layout.RAQM)
+                     for f in REFS]
+            rh = int(em * 1.12)
+            out = Image.new("RGB", (img.size[0], img.size[1] + rh * len(fonts)), "white")
+            out.paste(img, (0, 0))
+            d = ImageDraw.Draw(out)
+            for f_i, font in enumerate(fonts):
+                for c, it in enumerate(items):
+                    cx = (6 + c * cell) / n + em / 2
+                    cy = img.size[1] + f_i * rh + rh / 2
+                    d.text((cx, cy), as_text(it), font=font, fill=(0, 0, 0), anchor="mm")
+            img = out
         if os.environ.get("LABELS", "1") == "1":
             fs = max(11, int(cell / n * 0.15))
             font = ImageFont.truetype(LABEL_FONT, fs)
