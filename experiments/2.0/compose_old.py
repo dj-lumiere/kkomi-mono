@@ -319,12 +319,13 @@ def stack(hs, b, dot_y=None):
     if len(hs) == 1:
         return [jamo_part(hs[0], b)]
     if hs in (["ㅗ", "ㅗ"], ["ㅜ", "ㅜ"]):
-        # two ㅗ as one shape like 土: one stem through a short bar down to a long bar
-        # (ㅜㅜ the same upside down)
+        # two ㅗ as one shape like 土: one stem through a bar down to a second bar of the
+        # same length (ㅜㅜ the same upside down)
         up = hs[0] == "ㅗ"
-        y_long, y_short = (0, 0.5) if up else (1, 0.5)
-        f = FR.F([(0.5, 1), (0.5, 0), (0.24, y_short), (0.76, y_short), (0, y_long), (1, y_long)],
+        y_end, y_mid = (0, 0.5) if up else (1, 0.5)
+        f = FR.F([(0.5, 1), (0.5, 0), (0, y_mid), (1, y_mid), (0, y_end), (1, y_end)],
                  [(0, 1), (2, 3), (4, 5)])
+        TALL[0] = True
         return [(f, b)]
     mid = (b[1] + b[3]) / 2
     dot = 2 * 0.8 * PEN
@@ -336,6 +337,7 @@ def stack(hs, b, dot_y=None):
 
 STYLE = ["C"]        # the current item's style, set by syllable()
 EXTRA = [[]]         # vowels written in the initial's row (the first ㅣ of ㅣㅗㅣ)
+TALL = [False]       # the vowel under the initial has two bars (土, ‡) and needs height
 
 
 def vowel_layout(ch, hf, double):
@@ -355,10 +357,19 @@ def vowel_layout(ch, hf, double):
             hb, vb2 = group_box(mf, b, gh), group_box(mf, b, gv)
             return V.index(m), [(sub_frame(mf, gh), hb), (sub_frame(mf, gv), vb2)], b, vb2[0], 1, False
         return V.index(m), [(FR.FRAMES[m], b)], b, (b[0] if H.vowel_class(V.index(m)) == 0 else None), 0, False
+    if toks == ["ㅜ", "ㅓ", "ㅡ"]:
+        # ᆋ: ㅝ with one more bar under it
+        b = vbox("ㅝ")
+        mf = FR.FRAMES["ㅝ"]; gh, gv = GROUPS["ㅝ"]
+        up = (b[0], b[1] + PEN + 40, b[2], b[3])
+        hb, vb2 = group_box(mf, up, gh), group_box(mf, up, gv)
+        bar = (b[0], b[1], vb2[2], b[1] + PEN)
+        return V.index("ㅝ"), [(sub_frame(mf, gh), hb), (FR.FRAMES["ㅡ"], flat("ㅡ", bar)), (sub_frame(mf, gv), vb2)], b, vb2[0], 2, False
     if toks == ["ㅗ", "ㅗ", "ㅣ"]:
         # ‡ in ㅗ's place, under the initial: one stem crossed by two bars
         b = vbox("ㅜ")
-        f = FR.F([(0.5, 1), (0.5, 0), (0.1, 0.72), (0.9, 0.72), (0, 0.36), (1, 0.36)], [(0, 1), (2, 3), (4, 5)])
+        f = FR.F([(0.5, 1), (0.5, 0), (0, 0.8), (1, 0.8), (0, 0.2), (1, 0.2)], [(0, 1), (2, 3), (4, 5)])
+        TALL[0] = True
         return V.index("ㅜ"), [(f, b)], b, None, 1, False
     if toks[0] not in HOR and any(t in HOR for t in toks) and toks != ["ㅣ", "ㆍ"]:
         # vertical vowels before the first horizontal one stand in the initial's row as
@@ -485,6 +496,7 @@ def syllable(text, version="C"):
     double = len(comps) > 1 and not light
     STYLE[0] = version
     EXTRA[0] = []
+    TALL[0] = False
     v, vparts, vb, vx0, nh, long_h = vowel_layout(Vc, hf, double)
     vx0_first = vx0
     G = gap_to_vowel(comps, light)
@@ -519,6 +531,17 @@ def syllable(text, version="C"):
             left = min(p[1][0] for p in parts)
             both = [shift_x(p, left, right, left, CELL[2]) for p in parts + vparts]
             parts, vparts = both[:len(parts)], both[len(parts):]
+    if TALL[0]:
+        # two bars and a stem need about 3 pens of height and two whites between: the
+        # initial gives up its lower part (the final moves down by itself below)
+        need = 3 * PEN + 2 * 45
+        vy0 = min(p[1][1] for p in vparts); vy1 = max(p[1][3] for p in vparts)
+        if vy1 - vy0 < need:
+            extra = need - (vy1 - vy0)
+            iy0 = min(p[1][1] for p in parts); iy1 = max(p[1][3] for p in parts)
+            g = lambda y: iy1 + (y - iy1) * (iy1 - iy0 - extra) / max(iy1 - iy0, 1)
+            parts = [(q[0], (q[1][0], g(q[1][1]), q[1][2], g(q[1][3]))) for q in parts]
+            vparts = [(q[0], (q[1][0], q[1][1], q[1][2], q[1][3] + extra)) for q in vparts]
     if EXTRA[0]:
         rx0 = min(p[1][0] for p in parts); rx1 = max(p[1][2] for p in parts)
         hx0 = min(p[1][0] for p in vparts); hx1 = max(p[1][2] for p in vparts)
