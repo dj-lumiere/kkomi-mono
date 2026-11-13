@@ -344,13 +344,76 @@ def flag(ops, stem_w, cell, ccw, line_w):
     return out
 
 
-def dotted_center(zero_ops, period_ops):
-    """A smaller copy of the font's own period, set in the middle of the zero."""
-    zb, pb = M.bounds(zero_ops), M.bounds(period_ops)
-    k = 0.75
-    cx, cy = (zb[0] + zb[2]) / 2, (zb[1] + zb[3]) / 2
-    pcx, pcy = (pb[0] + pb[2]) / 2, (pb[1] + pb[3]) / 2
-    return M.transformed(period_ops, k, cx - k * pcx, k, cy - k * pcy)
+ZERO_NARROW = 0.88    # the zero's width against the font's own, so it is not taken for O
+ZERO_CLEAR = 0.25     # white between the backslash and the ring, in stroke widths
+
+
+def slashed_zero(zero_ops, ccw):
+    """The zero made narrower, with a short backslash inside its counter. Against O the
+    narrower ring tells it apart, and the backslash runs the other way from the slash of Ø."""
+    zb = M.bounds(zero_ops)
+    cx = (zb[0] + zb[2]) / 2
+    ring = M.transformed(zero_ops, ZERO_NARROW, cx * (1 - ZERO_NARROW))
+    return ring + backslash_in(ring, ccw)
+
+
+def backslash_in(ring, ccw):
+    """A backslash through the middle of the ring's counter, as wide as the ring's stroke.
+    It runs across the counter's long axis the way \\ runs across an upright one (so in
+    the italic it leans with the ring) and stops ZERO_CLEAR stroke widths short of the
+    ring at both ends."""
+    contours = [M.polygon_points(M.flattened(c))[0] for c in M.polygon_points_ops(ring)]
+    outer, inner = sorted(contours, key=lambda c: -abs(M.signed_area(c)))[:2]
+
+    def extent(c, d):
+        proj = [p[0] * d[0] + p[1] * d[1] for p in c]
+        return max(proj) - min(proj)
+    n = len(inner)
+    mx, my = sum(p[0] for p in inner) / n, sum(p[1] for p in inner) / n
+    sxx = sum((p[0] - mx) ** 2 for p in inner) / n
+    syy = sum((p[1] - my) ** 2 for p in inner) / n
+    sxy = sum((p[0] - mx) * (p[1] - my) for p in inner) / n
+    th = 0.5 * math.atan2(2 * sxy, sxx - syy)
+    v = (math.cos(th), math.sin(th))                 # the counter's long axis
+    if abs(v[1]) < abs(v[0]):
+        v = (-v[1], v[0])
+    if v[1] < 0:
+        v = (-v[0], -v[1])
+    u = (v[1], -v[0])                                # across it, to the right
+    line_w = (extent(outer, u) - extent(inner, u) + extent(outer, v) - extent(inner, v)) / 4
+    ha, hb = extent(inner, u) / 2, extent(inner, v) / 2
+    half = (-ha * u[0] + hb * v[0], -ha * u[1] + hb * v[1])
+    keep = line_w / 2 + ZERO_CLEAR * line_w
+
+    def inside(q):
+        hit = False
+        for (x0, y0), (x1, y1) in zip(inner, inner[1:] + inner[:1]):
+            if (y0 > q[1]) != (y1 > q[1]) and q[0] < x0 + (q[1] - y0) * (x1 - x0) / (y1 - y0):
+                hit = not hit
+        return hit
+
+    def ends(k):
+        return (mx - k * half[0], my - k * half[1]), (mx + k * half[0], my + k * half[1])
+
+    def clear(k):
+        return all(inside(e) and all(math.dist(p, e) >= keep for p in inner) for e in ends(k))
+    k = 0.9
+    while k > 0.2 and not clear(k):
+        k -= 0.02
+    return capsule(*ends(k), line_w, ccw)
+
+
+def refit_backslash(ops):
+    """The zero after its strokes were thickened (or slanted): the backslash is drawn again
+    for the ring as it is now."""
+    contours = M.polygon_points_ops(ops)
+    if len(contours) < 3:
+        return ops
+    pts = [M.polygon_points(c)[0] for c in contours]
+    order = sorted(range(len(contours)), key=lambda i: -abs(M.signed_area(pts[i])))
+    ring = [op for i in order[:2] for op in contours[i]]
+    rest = [op for i in order[3:] for op in contours[i]]
+    return ring + rest + backslash_in(ring, M.signed_area(pts[order[2]]) > 0)
 
 
 def mirrored(ops):
@@ -604,7 +667,7 @@ def main():
                     table.cmap[cp] = new
     font.setGlyphOrder(order)
     cmap = font.getBestCmap()
-    zero, period = cmap.get(ord("0")), cmap.get(ord("."))
+    zero = cmap.get(ord("0"))
     glyph_i, glyph_l = cmap.get(ord("i")), cmap.get(ord("l"))
     # ss02: the font's own 0 i j l, placed in the cell as they come (no dot in the
     # zero, the i and j with their round dots, the l without its hook)
@@ -674,8 +737,8 @@ def main():
                 # an operator in code: centred on the hyphen like + - =, not raised
                 ab = M.bounds(new_ops)
                 new_ops = M.transformed(new_ops, 1.0, 0.0, 1.0, operator_axis - (ab[1] + ab[3]) / 2)
-            if name == zero and period:
-                new_ops = new_ops + dotted_center(new_ops, M.record(glyph_set, period))
+            if name == zero:
+                new_ops = slashed_zero(new_ops, ccw)
         glyphs[name] = to_tt_glyph(new_ops)
         hmtx[name] = (new_adv, 0)
 

@@ -30,7 +30,7 @@ from fontTools.ttLib.removeOverlaps import removeOverlaps
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import make_mono as M  # noqa: E402
-from make_mono_static import embolden, to_tt_glyph_quadratic  # noqa: E402
+from make_mono_static import embolden, refit_backslash, to_tt_glyph_quadratic  # noqa: E402
 
 # style -> (added to upright strokes, added to flat strokes, weight class)
 WEIGHTS = {
@@ -50,6 +50,7 @@ def main():
     cmap = font.getBestCmap()
     glyf, hmtx = font["glyf"], font["hmtx"]
     keep = {name for cp, name in cmap.items() if any(a <= cp <= b for a, b in KEEP_RANGES)}
+    zero = cmap.get(ord("0"))
 
     changed = []
     for name in font.getGlyphOrder():
@@ -61,6 +62,8 @@ def main():
         thick = embolden(ops, GROW_X, GROW_Y)
         # embolden grows a glyph towards the upper right: move it back by half
         thick = M.transformed(thick, 1.0, -GROW_X / 2, 1.0, -GROW_Y / 2)
+        if name == zero:
+            thick = refit_backslash(thick)
         glyf[name] = to_tt_glyph_quadratic(thick)
         changed.append(name)
     removeOverlaps(font, glyphNames=changed, removeHinting=True, ignoreErrors=True)
