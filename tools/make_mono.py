@@ -106,11 +106,6 @@ KEEP_RANGES = [(0x2500, 0x259F), (0x2800, 0x28FF), (0xE0A0, 0xE0B3)]
 # cells keep their width (a Hangul syllable stays exactly 1 em), so the letters gain
 # height only: at the same font size they stand as tall as in other coding fonts.
 TALL = 1.15
-# The one-cell glyphs (Latin, digits, symbols, the operator ligatures) are drawn this much
-# taller again, so beside Hangul they do not look small: a capital stands about 0.77 of a
-# syllable's height instead of 0.70. Hangul and other wide glyphs keep TALL alone.
-HALF_TALL = 1.10
-POINT_GROW = 1.35       # . , : ; larger than one stroke's dot
 # Alternate glyphs turned on by a feature: tag -> [(glyph, alternate)]. The build adds
 # to it before the features are written.
 ALTERNATES = {}
@@ -163,15 +158,6 @@ def bounds(ops):
     for op, args in ops:
         getattr(pen, op)(*args)
     return pen.bounds
-
-
-def grown(ops, k=None):
-    """A dot (or a whole period) POINT_GROW times larger about its own middle, as the
-    period, comma, colon and semicolon are drawn."""
-    k = POINT_GROW if k is None else k
-    b = bounds(ops)
-    cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
-    return transformed(ops, k, cx * (1 - k), k, cy * (1 - k))
 
 
 def transformed(ops, sx, dx, sy=1.0, dy=0.0):
@@ -702,13 +688,13 @@ def add_ligatures(font, kinds, relation=None, extra_fea=""):
                                  + transformed(sl, 1.0, W2 / 2 - touch / 2 - sb[0]))
 
     # ...  : the font's own period raised to the middle of the operators, one per cell
-    period = grown(record(glyph_set, gname["."]))
+    period = record(glyph_set, gname["."])
     pb = bounds(period)
     mid = transformed(period, 1.0, 0.0, 1.0, axis - (pb[1] + pb[3]) / 2)
     shapes["period_period_period"] = (3, [op for i in range(3) for op in transformed(mid, 1.0, i * CELL)])
 
     # :=  : the colon's dots at the heights of the = bars, the pair centred in two cells
-    colon = [grown(c) for c in contours(record(glyph_set, gname[":"]))]
+    colon = contours(record(glyph_set, gname[":"]))
     colon.sort(key=lambda c: bounds(c)[1])
     bar_mid = [equal[1] + eq_stroke / 2, equal[3] - eq_stroke / 2]
     dots = []

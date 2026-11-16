@@ -43,9 +43,3 @@ KNPS Kkomi Mono
 2. make_kana.py         원본 OTF의 가나 중심선 -> Base의 가나, 반각 가타카나, ★ ☆
 3. make_italic.py       Base -> base/KNPSKkomiMono-BaseItalic.ttf
 4. make_bold.py         Base, BaseItalic -> Regular, Italic, Bold, Bold Italic
-
-2.0에서 바꾼 내용:
-- 모든 글자를 원본 글자의 획 중심선과 꼬미의 펜으로 다시 그린 가변 폰트(굵기 100~900)로 바꿨습니다.
-- 현대 한글 11,172자와 옛한글 조합을 꼬미가 직접 그린 글자의 자모와 원본에서 잰 배치 비율로 다시 조합했습니다.
-- 가나를 원본 고딕 가나의 뼈대로 다시 그렸습니다(배치 참고: SIL Open Font License 폰트들, 윤곽은 쓰지 않음).
-- 숫자 3, 1, 키릴 б Ь у 등의 모양을 바꿔 헷갈리는 글자를 구별했습니다.

@@ -2,10 +2,12 @@
 
 국립공원공단의 **국립공원 꼬미체**(KNPS Kkomi)를 에디터와 터미널에서 쓰도록 고정폭으로 바꾼 폰트입니다.
 
+> 1.8.3이 마지막 판입니다. 새 글자나 모양 변경은 받지 않고, 글자가 깨지거나 앱에서 열리지 않는 버그만 1.8.x로 고칩니다. 획 중심선을 둥근 펜으로 다시 그린 후속 폰트는 **KNPS Kkomi Pen Mono**입니다.
+
 - 라틴 문자와 기호는 한 칸(500), 한글은 두 칸(1000)입니다 (UPM 1000).
-- 2.0부터 모든 글자를 꼬미의 획 중심선과 펜으로 다시 그린 가변 폰트입니다. 굵기는 100~900이고, 라틴은 900, 그 밖의 글자는 800, 현대 한글은 700, 옛한글은 600까지 굵어집니다(그보다 굵은 굵기에서는 그 모양을 씁니다).
-- 현대 한글 11,172자와 옛한글(첫가끝 자모를 이어 쓴 모든 조합)을 같은 조합 규칙으로 그립니다.
-- 정적 폰트 18벌(100~900 × 똑바름·이탤릭)과 가변 폰트 2벌이 있습니다. 400과 700은 1.x와 같은 이름(Regular, Bold, Italic, Bold Italic)이라 기존 설정을 그대로 쓸 수 있습니다.
+- 글자 높이를 원본의 1.15배로 늘려, 같은 글자 크기에서 다른 코딩 폰트만큼 커 보입니다.
+- Regular, Italic, Bold, Bold Italic 네 벌이 있습니다.
+- 14px 이상에서 보기 좋게 맞췄습니다. 12~13px에서도 한글을 읽을 수 있지만, 겹받침이 있는 글자는 뭉칠 수 있습니다. 라틴 글자와 숫자는 10px에서도 서로 구별되도록 그렸습니다.
 - [웹에서 미리보기](https://dj-lumiere.github.io/kkomi-mono/) · [글자 목록](https://dj-lumiere.github.io/kkomi-mono/chars.html) · [내려받기](https://github.com/dj-lumiere/kkomi-mono/releases/latest)
 
 ![코드 예시: 리거처, 한글 주석, 이탤릭 키워드](images/code.png)
@@ -16,15 +18,14 @@
 
 ## 설치
 
-`fonts/`의 정적 폰트를 설치합니다. 1.x를 쓰던 설정은 Regular, Italic, Bold, Bold Italic 네 파일만 설치해도 그대로 동작합니다.
+`fonts/` 폴더의 네 파일을 함께 설치합니다.
 
 | 파일 | 굵기 |
 |---|---|
-| `KNPSKkomiMono-Thin.ttf` ~ `KNPSKkomiMono-Black.ttf` | 100 ~ 900 |
-| `KNPSKkomiMono-ThinItalic.ttf` ~ `KNPSKkomiMono-BlackItalic.ttf` | 100 ~ 900, 13° 기울임 |
-| `variable/KNPSKkomiMono-VF.ttf`, `variable/KNPSKkomiMono-Italic-VF.ttf` | 가변 100 ~ 900 |
-
-정적 폰트와 가변 폰트를 함께 설치하면 같은 이름이 겹치니 둘 중 하나만 설치하세요.
+| `KNPSKkomiMono-Regular.ttf` | 400 |
+| `KNPSKkomiMono-Italic.ttf` | 400, 13° 기울임 |
+| `KNPSKkomiMono-Bold.ttf` | 700 |
+| `KNPSKkomiMono-BoldItalic.ttf` | 700, 13° 기울임 |
 
 VS Code 예:
 
@@ -36,38 +37,20 @@ VS Code 예:
 
 ### 웹에서 쓰기
 
-`fonts/woff2/`에 정적 폰트 18벌과 가변 폰트 2벌의 woff2 파일이 있습니다. 가변 폰트 하나로 모든 굵기를 쓸 수 있습니다.
+`fonts/woff2/`에 같은 네 벌의 woff2 파일이 있습니다. 하나에 약 2.1~2.4MB입니다.
 
 ```css
-@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-VF.woff2") format("woff2"); font-weight: 100 900; font-style: normal; }
-@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Italic-VF.woff2") format("woff2"); font-weight: 100 900; font-style: italic; }
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Regular.woff2") format("woff2"); font-weight: 400; font-style: normal; }
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Italic.woff2") format("woff2"); font-weight: 400; font-style: italic; }
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-Bold.woff2") format("woff2"); font-weight: 700; font-style: normal; }
+@font-face { font-family: "KNPS Kkomi Mono"; src: url("KNPSKkomiMono-BoldItalic.woff2") format("woff2"); font-weight: 700; font-style: italic; }
 code, pre { font-family: "KNPS Kkomi Mono", monospace; }
 ```
-
-## 2.0에서 바뀐 점
-
-**모든 글자를 다시 그림**
-- 원본 꼬미의 글자를 획 중심선으로 나누고, 꼬미의 펜(획 끝과 모서리 모양)으로 다시 그립니다. 굵기마다 펜 굵기만 바뀌어서 100에서 900까지 같은 모양이 이어집니다.
-- 획 사이 흰 공간이 굵기를 올려도 막히지 않도록 글자마다 펜 굵기의 상한을 둡니다.
-
-**한글**
-- 현대 한글과 옛한글을 하나의 조합기로 만듭니다. 자모 모양은 꼬미가 직접 그린 2,675자에서 자모 × 자리 × 모음 종류마다 고른 대표 모양이고, 배치는 원본에서 잰 비율(초성 높이를 1로 둔 간격과 크기)을 따릅니다.
-- 옛한글은 자모마다 문맥별 꼴을 두고 OpenType 문맥 치환(ljmo, vjmo, tjmo)으로 고릅니다. 첫가끝 자모를 이어 쓰면 어떤 조합이든 한 음절로 그립니다.
-- 아래아(ᆞ)와 쌍아래아(ᆢ)는 점으로 그리고 ㅡ 자리에 둡니다. 가벼운 소리(ㅸ ㅱ ㅹ ㆄ ᄛ)는 ㅎ과 같은 높이입니다.
-
-**그 밖**
-- 가나를 원본 고딕 가나의 뼈대와 OFL 폰트들의 배치로 다시 그렸습니다.
-- 헷갈리는 쌍을 더 구별합니다: 숫자 3은 위가 평평하고(키릴 З와 구별), 1은 받침이 있고, 키릴 б Ь у는 6 b y와 구별되는 모양입니다.
-- 제어 문자 그림, 둘러싼 영숫자, 단위 기호, 로마 숫자를 2.0 글자로 다시 조합했습니다.
-
-아래 "원본과 달라진 점"은 1.x에서 정한 내용이며, 2.0에도 대부분 그대로 이어집니다.
 
 ## 원본과 달라진 점
 
 **고정폭**
 - 모든 글자를 세로로 1.15배 늘리고, 그만큼 두꺼워진 가로획은 원래 굵기로 되돌렸습니다. 칸 너비는 그대로라 한글 한 글자는 정확히 1em이고, 줄 높이는 1.32em입니다.
-- 한 칸 글자(라틴 문자, 숫자, 기호, 연산자 리거처)는 세로로 1.1배 더 늘렸습니다. 대문자 높이가 한글 높이의 약 0.77배입니다(원본은 0.7배). 선 그리기, 블록, 점자, Powerline 글자는 칸 끝에 맞닿아야 해서 늘리지 않았습니다.
-- 줄 간격은 모든 시스템에서 typo 값(USE_TYPO_METRICS)을 따릅니다. Windows가 글자를 자르는 범위(usWin 값)는 가장 높고 가장 깊은 글자까지 넓혀서, 위로 높은 악센트 대문자와 아래로 깊은 한글 받침이 잘리지 않습니다.
 - 넓은 라틴 문자는 가로로 줄이고 세로획 굵기를 보정했습니다.
 - 한글은 두 칸을 채우도록 키우고 획 굵기를 다시 맞췄습니다. `고 두 드`처럼 좁은 글자는 가로로 최대 1.6배까지 늘립니다.
 - 가나는 두 칸에 두되 92%로 줄였습니다. 원래 크기로는 한글 옆에서 더 크고 진해 보입니다.
@@ -149,14 +132,12 @@ VS Code에서는 `"editor.fontLigatures": "'ss01', 'ss03'"`처럼 켤 기능을 
 - `l`은 `ℓ`처럼 아래에서 한 번 꼬인 고리 모양입니다. 꼬리가 칸의 왼쪽 아래와 오른쪽 아래로 뻗습니다.
 
 **굵기**
-- 획은 모든 글자에서 고르게 두껍게 했습니다. Regular는 세로획이 대문자 높이의 약 10.5%, Bold는 약 14%입니다. 한글의 획 굵기는 라틴 문자에 맞춥니다.
+- Regular는 세로획이 대문자 높이의 약 12.5%, Bold는 약 17%가 되도록 획을 고르게 두껍게 했습니다.
 
 **힌팅**
 - 라틴, 그리스, 키릴 문자와 리거처에 ttfautohint 힌트를 넣었습니다. Windows에서 작은 크기(10~14px)일 때 획이 픽셀에 맞춰집니다. 한글과 기호에는 힌트가 없습니다.
 
 ## 다시 만들기
-
-아래는 1.x를 만드는 방법입니다. 2.0을 만드는 스크립트(중심선 추출, 조합기, 펜 렌더러, 가변 폰트 빌드)는 아직 이 저장소에 정리되지 않았습니다.
 
 Python 3과 `fonttools`, `skia-pathops`, `ttfautohint-py`, 가나를 다시 그리는 데 쓰는 `Pillow`, `scipy`, `scikit-image`, `skan`이 필요합니다.
 
